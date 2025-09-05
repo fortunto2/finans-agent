@@ -17,10 +17,6 @@ from datetime import datetime
 class MarketData(BaseModel):
     """Market data for a specific symbol"""
 
-
-class Config:
-    extra = "forbid"
-
     symbol: str
     timestamp: datetime
     open: float
@@ -38,423 +34,324 @@ class Config:
 class NewsSentiment(BaseModel):
     """News sentiment analysis result"""
 
-
-class Config:
-    extra = "forbid"
-
     headline: str
     content: str
     source: str
     timestamp: datetime
     sentiment_score: float = Field(..., ge=-1.0, le=1.0)  # -1 to 1
     relevance_score: float = Field(..., ge=0.0, le=1.0)  # 0 to 1
-    entities_mentioned: List[str] = []
-    impact_assessment: Optional[str] = None
+    impact_assessment: str = Field(description="Expected market impact (low/medium/high)")
+
+    class Config:
+        extra = "forbid"
 
 
 class EconomicIndicator(BaseModel):
     """Economic indicator data"""
 
-
-class Config:
-    extra = "forbid"
-
     indicator_name: str
     value: float
-    forecast: Optional[float] = None
-    previous: Optional[float] = None
+    unit: str
     timestamp: datetime
-    impact_level: Optional[str] = None  # "low", "medium", "high"
+    source: str = "FRED"
+    previous_value: Optional[float] = None
+    forecast_value: Optional[float] = None
+
+    class Config:
+        extra = "forbid"
 
 
-# ============ Forecast Models ============
+# ============ Analysis Results Models ============
+
+
+class MarketDataResponse(BaseModel):
+    """Response from market data collection"""
+
+    symbols_analyzed: List[str]
+    market_data: List[MarketData]
+    market_trend: str = Field(description="Overall market trend (bullish/bearish/neutral)")
+    volatility_assessment: str = Field(description="Market volatility level")
+    key_insights: List[str] = Field(description="Key market insights")
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
 
 
 class ForecastResult(BaseModel):
-    """AI forecast result with probability distribution"""
-
-
-class Config:
-    extra = "forbid"
+    """Probabilistic forecast result from SGR agents"""
 
     question: str
     prediction_probability: float = Field(..., ge=0.0, le=1.0)
-    confidence_interval: Dict[str, float] = {}  # e.g., {"95%": 0.15}
+    confidence_interval: Dict[str, float] = Field(
+        description="Confidence intervals (e.g., {'80%': 0.1, '95%': 0.2})"
+    )
     rationale: str
-    forecast_horizon: str  # e.g., "1_week", "1_month"
-    agent_type: str  # e.g., "bullish", "bearish", "technical"
+    forecast_horizon: str = Field(description="Time horizon (1_day, 1_week, 1_month)")
+    agent_type: str = Field(description="Agent type (bullish, bearish, technical)")
     timestamp: datetime
-    brier_score: Optional[float] = None  # Will be calculated after outcome
+    brier_score: Optional[float] = None
 
-
-class ForecastConsensus(BaseModel):
-    """Aggregated forecast from multiple agents"""
-
-
-class Config:
-    extra = "forbid"
-
-    question: str
-    consensus_probability: float = Field(..., ge=0.0, le=1.0)
-    individual_forecasts: List[ForecastResult] = []
-    disagreement_level: float = Field(..., ge=0.0, le=1.0)
-    confidence_score: float = Field(..., ge=0.0, le=1.0)
-    timestamp: datetime
-
-
-# ============ Trading Models ============
+    class Config:
+        extra = "forbid"
 
 
 class TradingSignal(BaseModel):
-    """Trading signal from analysis"""
-
-
-class Config:
-    extra = "forbid"
+    """Trading signal recommendation"""
 
     symbol: str
     signal_type: Literal["buy", "sell", "hold"]
-    signal_strength: float = Field(..., ge=0.0, le=1.0)
+    strength: float = Field(..., ge=0.0, le=1.0)  # 0 to 1
     target_price: Optional[float] = None
     stop_loss: Optional[float] = None
-    risk_level: str  # "low", "medium", "high"
-    reasoning: str
-    generated_by: str  # Agent that generated signal
+    confidence_level: float = Field(..., ge=0.0, le=1.0)
+    rationale: str
     timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+class RiskAssessment(BaseModel):
+    """Risk assessment for trade or portfolio"""
+
+    symbol: Optional[str] = None
+    portfolio_symbols: Optional[List[str]] = None
+    var_1d: float = Field(description="1-day Value at Risk")
+    var_5d: float = Field(description="5-day Value at Risk")
+    max_drawdown: float = Field(description="Maximum drawdown estimate")
+    volatility: float = Field(description="Annualized volatility")
+    sharpe_ratio: Optional[float] = None
+    beta: Optional[float] = None
+    risk_level: Literal["low", "medium", "high"]
+    recommendations: List[str]
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+class TradingRecommendation(BaseModel):
+    """Complete trading recommendation"""
+
+    symbol: str
+    recommendation: Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
+    target_price: Optional[float] = None
+    stop_loss: Optional[float] = None
+    position_size: Optional[float] = Field(description="Recommended position size")
+    confidence_level: float = Field(..., ge=0.0, le=1.0)
+    rationale: str
+    risk_assessment: RiskAssessment
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+# ============ Portfolio Models ============
 
 
 class Trade(BaseModel):
-    """Executed trade record"""
-
-
-class Config:
-    extra = "forbid"
+    """Individual trade record"""
 
     trade_id: str
     symbol: str
-    side: Literal["buy", "sell"]
+    action: Literal["buy", "sell"]
     quantity: float
     price: float
     timestamp: datetime
-    status: Literal["pending", "executed", "cancelled", "failed"]
-    commission: Optional[float] = None
-    pnl: Optional[float] = None  # Profit/Loss when closed
+    order_type: str = "market"
+    status: str = "executed"
+
+    class Config:
+        extra = "forbid"
 
 
 class PortfolioPosition(BaseModel):
     """Current portfolio position"""
 
-
-class Config:
-    extra = "forbid"
-
     symbol: str
     quantity: float
     avg_cost: float
-    current_price: float
-    market_value: float
-    unrealized_pnl: float
-    weight: float  # Portfolio weight percentage
+    current_price: Optional[float] = None
+    unrealized_pnl: Optional[float] = None
+    weight: Optional[float] = None
     last_updated: datetime
 
-
-# ============ Risk Management Models ============
-
-
-class RiskAssessment(BaseModel):
-    """Risk assessment for a trade or portfolio"""
+    class Config:
+        extra = "forbid"
 
 
-class Config:
-    extra = "forbid"
+class PerformanceReport(BaseModel):
+    """Portfolio performance report"""
 
-    symbol: Optional[str] = None  # None for portfolio-level risk
-    var_1d: float  # 1-day Value at Risk
-    var_5d: float  # 5-day Value at Risk
+    total_return: float
+    sharpe_ratio: float
     max_drawdown: float
-    sharpe_ratio: Optional[float] = None
-    volatility: float
-    risk_level: Literal["low", "medium", "high", "extreme"]
-    recommendations: List[str] = []
+    win_rate: float
+    total_trades: int
+    benchmark_return: Optional[float] = None
+    alpha: Optional[float] = None
+    beta: Optional[float] = None
+    report_period: str
     timestamp: datetime
 
-
-class ComplianceCheck(BaseModel):
-    """Compliance validation result"""
-
-
-class Config:
-    extra = "forbid"
-
-    check_type: str
-    symbol: Optional[str] = None
-    trade_amount: Optional[float] = None
-    is_compliant: bool
-    violations: List[str] = []
-    regulatory_notes: List[str] = []
-    timestamp: datetime
+    class Config:
+        extra = "forbid"
 
 
-# ============ SGR Tool Models ============
+# ============ SGR Trading Request Models ============
 
 
 class MarketDataRequest(BaseModel):
-    """Request for market data"""
-
-
-class Config:
-    extra = "forbid"
+    """Request market data for specific symbols"""
 
     tool: Literal["get_market_data"]
     symbols: List[str]
-    timeframe: str = "1d"  # 1m, 5m, 1h, 1d, 1w
-    period: str = "1mo"  # 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y, 10y, ytd, max
+    timeframe: str = Field(default="1d", description="Data timeframe (1d, 5m, 1h)")
+    period: str = Field(default="1mo", description="Historical period (1mo, 3mo, 1y)")
 
-
-class ForecastRequest(BaseModel):
-    """Request for market forecast"""
-
-
-class Config:
-    extra = "forbid"
-
-    tool: Literal["generate_forecast"]
-    question: str
-    symbols: List[str] = []
-    forecast_horizon: str = "1_week"
-    agent_types: List[str] = ["bullish", "bearish", "technical"]
+    class Config:
+        extra = "forbid"
 
 
 class TradingAnalysisRequest(BaseModel):
-    """Request for trading analysis"""
-
-
-class Config:
-    extra = "forbid"
+    """Request comprehensive trading analysis"""
 
     tool: Literal["analyze_trading_opportunity"]
     symbol: str
-    analysis_type: str = "comprehensive"  # "technical", "fundamental", "comprehensive"
-    budget: Optional[float] = None
-    risk_tolerance: str = "medium"  # "low", "medium", "high"
+    analysis_type: str = Field(default="comprehensive", description="Type of analysis")
+    budget: Optional[float] = Field(default=None, description="Investment budget")
+    risk_tolerance: str = Field(default="medium", description="Risk tolerance level")
+
+    class Config:
+        extra = "forbid"
+
+
+class ForecastRequest(BaseModel):
+    """Request probabilistic forecast"""
+
+    tool: Literal["generate_forecast"]
+    question: str = Field(description="Forecast question to answer")
+    symbols: List[str] = Field(description="Symbols to analyze for forecast")
+    forecast_horizon: str = Field(default="1_week", description="Forecast time horizon")
+    agent_types: List[str] = Field(
+        default=["bullish", "bearish", "technical"], description="Agent types to use"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class RiskAssessmentRequest(BaseModel):
+    """Request risk assessment"""
+
+    tool: Literal["assess_risk"]
+    symbol: Optional[str] = None
+    trade_amount: Optional[float] = None
+    assessment_type: str = Field(default="portfolio", description="Type of risk assessment")
+
+    class Config:
+        extra = "forbid"
+
+
+class NewsAnalysisRequest(BaseModel):
+    """Request news sentiment analysis"""
+
+    tool: Literal["analyze_news"]
+    symbols: List[str]
+    sources: List[str] = Field(default=["reuters", "bloomberg"], description="News sources")
+    lookback_hours: int = Field(default=24, description="Hours to look back for news")
+
+    class Config:
+        extra = "forbid"
 
 
 class BacktestRequest(BaseModel):
-    """Request for strategy backtesting"""
-
-
-class Config:
-    extra = "forbid"
+    """Request strategy backtesting"""
 
     tool: Literal["run_backtest"]
     strategy_name: str
     symbols: List[str]
     start_date: str
     end_date: str
-    initial_capital: float = 100000
+    initial_capital: float = Field(default=100000, description="Starting capital")
 
-
-class RiskAssessmentRequest(BaseModel):
-    """Request for risk assessment"""
-
-
-class Config:
-    extra = "forbid"
-
-    tool: Literal["assess_risk"]
-    symbol: Optional[str] = None
-    trade_amount: Optional[float] = None
-    assessment_type: str = "portfolio"  # "trade", "portfolio"
-
-
-class NewsAnalysisRequest(BaseModel):
-    """Request for news sentiment analysis"""
-
-
-class Config:
-    extra = "forbid"
-
-    tool: Literal["analyze_news"]
-    symbols: List[str] = []
-    sources: List[str] = ["reuters", "bloomberg", "cnbc"]
-    lookback_hours: int = 24
-
-
-class ProphetArenaRequest(BaseModel):
-    """Request for Prophet Arena forecast validation"""
-
-
-class Config:
-    extra = "forbid"
-
-    tool: Literal["submit_to_prophet_arena"]
-    question: str
-    prediction_probability: float = Field(..., ge=0.0, le=1.0)
-    forecast_horizon: str
-
-
-class ComplianceCheckRequest(BaseModel):
-    """Request for compliance check"""
-
-
-class Config:
-    extra = "forbid"
-
-    tool: Literal["check_compliance"]
-    symbol: str
-    trade_amount: float
-    check_types: List[str] = ["position_limits", "regulatory", "risk_limits"]
-
-
-class GenerateReportRequest(BaseModel):
-    """Request to generate trading report"""
-
-
-class Config:
-    extra = "forbid"
-
-    tool: Literal["generate_report"]
-    report_type: str  # "portfolio", "performance", "risk", "forecast_accuracy"
-    period: str = "1mo"
-    include_charts: bool = True
+    class Config:
+        extra = "forbid"
 
 
 class ReportTaskCompletion(BaseModel):
-    """Report task completion with final results"""
-
-
-class Config:
-    extra = "forbid"
+    """Report completion of SGR trading analysis"""
 
     tool: Literal["report_completion"]
-    completed_steps_laconic: List[str]
-    final_recommendation: str = ""
-    code: str = "completed"
+    code: str = Field(description="Completion status code")
+    completed_steps_laconic: List[str] = Field(
+        description="Laconic list of completed analysis steps"
+    )
+    final_recommendation: Optional[str] = Field(
+        default=None, description="Final trading recommendation"
+    )
+
+    class Config:
+        extra = "forbid"
 
 
 # ============ SGR Response Model ============
 
 
 class SGRTradingResponse(BaseModel):
-    """SGR Trading Agent Response with structured reasoning"""
-
-
-class Config:
-    extra = "forbid"
+    """Schema-Guided Reasoning response for financial trading"""
 
     current_state: str = Field(
-        ..., description="Current understanding of the market situation"
+        description="Current analysis state (what the agent is thinking about)"
     )
     plan_remaining_steps_brief: List[str] = Field(
-        ..., description="List of 1-5 remaining steps to complete the analysis"
-    )
-    task_completed: bool = Field(
-        False, description="Whether the task is fully completed"
+        description="Brief list of remaining analysis steps to complete the task"
     )
     function: Union[
         MarketDataRequest,
-        ForecastRequest,
         TradingAnalysisRequest,
-        BacktestRequest,
+        ForecastRequest,
         RiskAssessmentRequest,
         NewsAnalysisRequest,
-        ProphetArenaRequest,
-        ComplianceCheckRequest,
-        GenerateReportRequest,
+        BacktestRequest,
         ReportTaskCompletion,
-    ] = Field(..., description="Next tool to execute")
+    ] = Field(description="Next financial analysis tool to execute")
+    task_completed: bool = Field(
+        default=False, description="Whether the financial analysis is complete"
+    )
 
     class Config:
         extra = "forbid"
 
 
-# ============ Response Models ============
-
-
-class MarketDataResponse(BaseModel):
-    """Market data analysis response"""
-
-
-class Config:
-    extra = "forbid"
-
-    symbols_analyzed: List[str]
-    market_data: List[MarketData]
-    key_insights: List[str] = []
-    market_trend: str  # "bullish", "bearish", "sideways"
-    volatility_assessment: str  # "low", "normal", "high", "extreme"
-    timestamp: datetime
-
-
-class TradingRecommendation(BaseModel):
-    """Trading recommendation response"""
-
-
-class Config:
-    extra = "forbid"
-
-    symbol: str
-    recommendation: Literal["strong_buy", "buy", "hold", "sell", "strong_sell"]
-    target_price: Optional[float] = None
-    stop_loss: Optional[float] = None
-    position_size: float  # Percentage of portfolio
-    rationale: str
-    risk_assessment: RiskAssessment
-    confidence_level: float = Field(..., ge=0.0, le=1.0)
-    timestamp: datetime
-
-
-class PerformanceReport(BaseModel):
-    """Trading performance report"""
-
-
-class Config:
-    extra = "forbid"
-
-    period_start: datetime
-    period_end: datetime
-    total_return: float
-    sharpe_ratio: float
-    max_drawdown: float
-    win_rate: float
-    total_trades: int
-    avg_trade_return: float
-    best_trade: float
-    worst_trade: float
-    current_positions: List[PortfolioPosition] = []
-    forecast_accuracy: Optional[float] = None  # Brier score if available
-
-
-# ============ Database/Memory Models ============
+# ============ Memory and Context Models ============
 
 
 class TradingMemory(BaseModel):
-    """In-memory trading database"""
+    """Agent memory for trading context"""
 
+    market_data: List[MarketData] = Field(default_factory=list)
+    forecasts: List[ForecastResult] = Field(default_factory=list)
+    positions: List[PortfolioPosition] = Field(default_factory=list)
+    recent_trades: List[Trade] = Field(default_factory=list)
+    risk_assessments: List[RiskAssessment] = Field(default_factory=list)
 
-class Config:
-    extra = "forbid"
-
-    market_data: List[MarketData] = []
-    forecasts: List[ForecastResult] = []
-    trades: List[Trade] = []
-    positions: List[PortfolioPosition] = []
-    news_sentiment: List[NewsSentiment] = []
-    risk_assessments: List[RiskAssessment] = []
-    performance_history: List[PerformanceReport] = []
+    class Config:
+        extra = "forbid"
 
 
 class CustomerRule(BaseModel):
-    """Customer-specific trading rule"""
-
-
-class Config:
-    extra = "forbid"
+    """Customer-specific trading rules and preferences"""
 
     rule_id: str
-    customer_context: str
-    rule_description: str
-    rule_type: str = "trading_preference"
-    parameters: Dict[str, Any] = {}
+    customer_id: str
+    rule_type: str = Field(description="Type of rule (risk_limit, preference, etc.)")
+    rule_value: Dict[str, Any] = Field(description="Rule parameters and values")
+    active: bool = True
     created_at: datetime
-    is_active: bool = True
+    last_modified: datetime
+
+    class Config:
+        extra = "forbid"

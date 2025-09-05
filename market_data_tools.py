@@ -300,7 +300,6 @@ class NewsAnalyzer:
                 timestamp=datetime.now(),
                 sentiment_score=sentiment_score,
                 relevance_score=0.8,
-                entities_mentioned=[symbol],
                 impact_assessment="medium",
             )
             mock_news.append(news_item)
@@ -409,7 +408,7 @@ class RiskAnalyzer:
                 var_5d=0.05,
                 max_drawdown=0.10,
                 volatility=0.15,
-                risk_level="unknown",
+                risk_level="medium",
                 recommendations=[f"Risk assessment error: {str(e)}"],
                 timestamp=datetime.now(),
             )
@@ -570,7 +569,7 @@ class TradingAnalyzer:
                     var_5d=0.05,
                     max_drawdown=0.10,
                     volatility=0.15,
-                    risk_level="unknown",
+                    risk_level="medium",
                     recommendations=["Manual review required"],
                     timestamp=datetime.now(),
                 ),
