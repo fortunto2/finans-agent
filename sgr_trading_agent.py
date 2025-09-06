@@ -31,6 +31,10 @@ from models import (
     NewsAnalysisRequest,
     WebAnalysisRequest,
     ComprehensiveWebResearch,
+    AlphaGenerationRequest,
+    AlphaSpec,
+    AlphaSeries,
+    AlphaReport,
     CreateTradingRule,
     GetTradingMemory,
     UpdateTradingRule,
@@ -67,6 +71,8 @@ from web_intelligence import (
 # Import Opoint API for news analysis
 from api import OpointAPI
 
+from alpha_engine import compute_alphas
+
 # Setup rich console for beautiful output
 console = Console()
 
@@ -78,6 +84,7 @@ __all__ = [
     "generate_forecast",
     "assess_risk",
     "analyze_news",
+    "generate_alphas",
     "run_backtest",
     "create_trading_rule",
     "get_trading_memory",
@@ -424,6 +431,9 @@ def dispatch(cmd) -> Union[str, Dict[str, Any], List[Dict[str, Any]]]:
             cmd.end_date,
             cmd.initial_capital,
         )
+
+    elif isinstance(cmd, AlphaGenerationRequest):
+        return generate_alphas(cmd.symbols, cmd.specs, cmd.timeframe, cmd.period)
 
     elif isinstance(cmd, WebAnalysisRequest):
         return analyze_web_content(
@@ -1123,6 +1133,32 @@ def analyze_news(
             "sentiment_category": "unknown",
             "average_sentiment": 0.0,
         }
+
+
+def generate_alphas(
+    symbols: List[str],
+    specs: List[AlphaSpec],
+    timeframe: str = "1d",
+    period: str = "3mo",
+) -> Dict[str, Any]:
+    """Generate alpha factors based on declarative specifications"""
+    try:
+        logger.info(f"Generating alphas for {symbols} ({len(specs)} specs)")
+        result = compute_alphas(symbols, specs, timeframe, period)
+        if result.get("success"):
+            DB.analysis_history.append(
+                {
+                    "type": "alpha_generation",
+                    "symbols": symbols,
+                    "specs": [s.model_dump() for s in specs],
+                    "timestamp": datetime.now().isoformat(),
+                    "reports": result.get("reports", []),
+                }
+            )
+        return result
+    except Exception as e:
+        logger.error(f"Alpha generation failed: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def run_backtest(

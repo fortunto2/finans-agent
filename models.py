@@ -289,6 +289,52 @@ class BacktestRequest(BaseModel):
         extra = "forbid"
 
 
+# === Alpha Research Models ===
+
+class AlphaOp(BaseModel):
+    name: Literal["delta", "delay", "ts_mean", "ts_std", "zscore", "ts_rank", "decay_linear"]
+    window: Optional[int] = None
+    k: Optional[int] = None  # step for delta/delay
+    class Config:
+        extra = "forbid"
+
+class AlphaSpec(BaseModel):
+    name: str
+    input: Literal["open", "high", "low", "close", "volume", "returns"]
+    ops: List[AlphaOp] = Field(default_factory=list)
+    class Config:
+        extra = "forbid"
+
+class AlphaPoint(BaseModel):
+    timestamp: datetime
+    value: float
+    class Config:
+        extra = "forbid"
+
+class AlphaSeries(BaseModel):
+    symbol: str
+    factor: str
+    points: List[AlphaPoint]
+    class Config:
+        extra = "forbid"
+
+class AlphaReport(BaseModel):
+    factor: str
+    last_value: Dict[str, float]
+    ic1d: Optional[float] = None
+    coverage: int
+    class Config:
+        extra = "forbid"
+
+class AlphaGenerationRequest(BaseModel):
+    tool: Literal["generate_alphas"]
+    symbols: List[str]
+    specs: List[AlphaSpec]
+    timeframe: str = Field(default="1d")
+    period: str = Field(default="3mo")
+    class Config:
+        extra = "forbid"
+
 class ReportTaskCompletion(BaseModel):
     """Report completion of SGR trading analysis"""
 
@@ -573,6 +619,7 @@ class SGRTradingResponse(BaseModel):
         RiskAssessmentRequest,
         NewsAnalysisRequest,
         BacktestRequest,
+        AlphaGenerationRequest,
         WebAnalysisRequest,
         ComprehensiveWebResearch,
         ReportTaskCompletion,
