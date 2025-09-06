@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  # SGR Trading Agent Web Interface
+  sgr-trading-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sgr-trading-agent
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - PYTHONPATH=/app
+      - ENABLE_PAPER_TRADING=true
+    volumes:
+      - .:/app:rw
+      - /app/.venv
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    command: ["chainlit", "run", "trading_demo_app.py", "--host", "0.0.0.0", "--port", "8000"]
+    networks:
+      - trading_network
+
+  # Cloudflare Tunnel for secure public access
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: sgr-trading-cloudflared
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --token
+      - ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - sgr-trading-agent
+    restart: unless-stopped
+    networks:
+      - trading_network
+    environment:
+      - TUNNEL_METRICS=0.0.0.0:8081
+
+
+networks:
+  trading_network:
+    driver: bridge

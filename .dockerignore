@@ -1,0 +1,55 @@
+# Git and documentation
+.git/
+.gitignore
+*.md
+LICENSE
+
+# Python cache and virtual environments
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+.env
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Docker files
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Data and logs
+data/
+logs/
+market_data/
+*.log
+
+# Temporary files
+tmp/
+temp/
+.tmp/
+
+# Node modules (if any)
+node_modules/
+
+# Coverage and testing
+.coverage
+.pytest_cache/
+htmlcov/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

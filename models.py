@@ -40,7 +40,9 @@ class NewsSentiment(BaseModel):
     timestamp: datetime
     sentiment_score: float = Field(..., ge=-1.0, le=1.0)  # -1 to 1
     relevance_score: float = Field(..., ge=0.0, le=1.0)  # 0 to 1
-    impact_assessment: str = Field(description="Expected market impact (low/medium/high)")
+    impact_assessment: str = Field(
+        description="Expected market impact (low/medium/high)"
+    )
 
     class Config:
         extra = "forbid"
@@ -69,7 +71,9 @@ class MarketDataResponse(BaseModel):
 
     symbols_analyzed: List[str]
     market_data: List[MarketData]
-    market_trend: str = Field(description="Overall market trend (bullish/bearish/neutral)")
+    market_trend: str = Field(
+        description="Overall market trend (bullish/bearish/neutral)"
+    )
     volatility_assessment: str = Field(description="Market volatility level")
     key_insights: List[str] = Field(description="Key market insights")
     timestamp: datetime
@@ -249,7 +253,9 @@ class RiskAssessmentRequest(BaseModel):
     tool: Literal["assess_risk"]
     symbol: Optional[str] = None
     trade_amount: Optional[float] = None
-    assessment_type: str = Field(default="portfolio", description="Type of risk assessment")
+    assessment_type: str = Field(
+        default="portfolio", description="Type of risk assessment"
+    )
 
     class Config:
         extra = "forbid"
@@ -260,7 +266,9 @@ class NewsAnalysisRequest(BaseModel):
 
     tool: Literal["analyze_news"]
     symbols: List[str]
-    sources: List[str] = Field(default=["reuters", "bloomberg"], description="News sources")
+    sources: List[str] = Field(
+        default=["reuters", "bloomberg"], description="News sources"
+    )
     lookback_hours: int = Field(default=24, description="Hours to look back for news")
 
     class Config:
@@ -297,6 +305,89 @@ class ReportTaskCompletion(BaseModel):
         extra = "forbid"
 
 
+# ============ Web Scraping & Intelligence Models ============
+
+
+class WebAnalysisRequest(BaseModel):
+    """Request for web-based financial analysis"""
+
+    tool: Literal["analyze_web_content"]
+    url: str = Field(description="URL to analyze for financial content")
+    analysis_type: str = Field(
+        default="financial_news",
+        description="Type of analysis: financial_news, earnings_report, market_analysis",
+    )
+    extract_data_points: List[str] = Field(
+        default=["sentiment", "key_metrics", "price_targets"],
+        description="Data points to extract from the content",
+    )
+    include_links: bool = Field(
+        default=True, description="Include related links in analysis"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class ComprehensiveWebResearch(BaseModel):
+    """Comprehensive web research for financial topics"""
+
+    tool: Literal["research_financial_topic"]
+    search_query: str = Field(description="Search query for financial research")
+    research_depth: str = Field(
+        default="comprehensive",
+        description="Research depth: basic, comprehensive, deep",
+    )
+    max_sources: int = Field(
+        default=5,
+        description="Maximum number of sources to analyze (limited to 5 for performance)",
+    )
+    include_news: bool = Field(
+        default=True, description="Include news sources in research"
+    )
+    include_analyst_reports: bool = Field(
+        default=True, description="Include analyst reports in research"
+    )
+    extract_financial_data: bool = Field(
+        default=True, description="Extract financial metrics and data"
+    )
+    time_range: str = Field(
+        default="1_week", description="Time range for research: 1_day, 1_week, 1_month"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class WebContentAnalysis(BaseModel):
+    """Analyzed web content result"""
+
+    url: str
+    title: str
+    content_type: str  # news, report, analysis, filing
+    sentiment_score: float  # -1.0 to 1.0
+    key_financial_metrics: Dict[str, Any]
+    extracted_data: Dict[str, Any]
+    market_impact_assessment: str
+    credibility_score: float  # 0.0 to 1.0
+    timestamp: datetime
+    source_quality: str  # high, medium, low
+
+
+class ResearchSummary(BaseModel):
+    """Summary of web research results"""
+
+    search_query: str
+    sources_analyzed: int
+    overall_sentiment: float
+    key_findings: List[str]
+    financial_consensus: Dict[str, Any]
+    risk_factors: List[str]
+    opportunities: List[str]
+    source_quality_distribution: Dict[str, int]
+    timestamp: datetime
+
+
 # ============ SGR Response Model ============
 
 
@@ -316,7 +407,10 @@ class SGRTradingResponse(BaseModel):
         RiskAssessmentRequest,
         NewsAnalysisRequest,
         BacktestRequest,
+        WebAnalysisRequest,
+        ComprehensiveWebResearch,
         ReportTaskCompletion,
+        # Deep Research tools would be imported separately when needed
     ] = Field(description="Next financial analysis tool to execute")
     task_completed: bool = Field(
         default=False, description="Whether the financial analysis is complete"

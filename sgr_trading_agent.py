@@ -8,7 +8,8 @@ Adapted for financial markets with Azure OpenAI integration.
 """
 
 import json
-import uuid
+
+# import uuid  # Not used
 from typing import List, Union, Dict, Any
 from openai import AzureOpenAI
 from rich.console import Console
@@ -28,13 +29,15 @@ from models import (
     BacktestRequest,
     RiskAssessmentRequest,
     NewsAnalysisRequest,
+    WebAnalysisRequest,
+    ComprehensiveWebResearch,
     ReportTaskCompletion,
     SGRTradingResponse,
     TradingMemory,
     MarketData,
-    MarketDataResponse,
+    # MarketDataResponse,  # Not used directly
     ForecastResult,
-    TradingRecommendation,
+    # TradingRecommendation,  # Not used directly
 )
 
 # Import market data tools
@@ -45,11 +48,28 @@ from market_data_tools import (
     RiskAnalyzer,
 )
 
+# Import web intelligence tools
+from web_intelligence import (
+    analyze_web_content,
+    research_financial_topic,
+)
+
 # Import Opoint API for news analysis
 from api import OpointAPI
 
 # Setup rich console for beautiful output
 console = Console()
+
+# Export DB instance for external use
+__all__ = [
+    "DB",
+    "get_market_data",
+    "analyze_trading_opportunity",
+    "generate_forecast",
+    "assess_risk",
+    "analyze_news",
+    "run_backtest",
+]
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -131,6 +151,25 @@ def dispatch(cmd) -> Union[str, Dict[str, Any], List[Dict[str, Any]]]:
             cmd.start_date,
             cmd.end_date,
             cmd.initial_capital,
+        )
+
+    elif isinstance(cmd, WebAnalysisRequest):
+        return analyze_web_content(
+            cmd.url,
+            cmd.analysis_type,
+            cmd.extract_data_points,
+            cmd.include_links,
+        )
+
+    elif isinstance(cmd, ComprehensiveWebResearch):
+        return research_financial_topic(
+            cmd.search_query,
+            cmd.research_depth,
+            cmd.max_sources,
+            cmd.include_news,
+            cmd.include_analyst_reports,
+            cmd.extract_financial_data,
+            cmd.time_range,
         )
 
     elif isinstance(cmd, ReportTaskCompletion):
@@ -427,19 +466,20 @@ def analyze_news(
         else:
             # Use real Opoint API for news analysis
             opoint = OpointAPI(settings.opoint_api_key)
-            
+
             all_news_data = []
             overall_sentiment_scores = []
-            
+
             for symbol in symbols:
                 # Search for news about this symbol
                 symbol_search = f"{symbol} OR {_get_company_name(symbol)}"
-                
+
                 # Get articles from last lookback_hours
                 from datetime import timedelta
+
                 end_date = datetime.now()
                 start_date = end_date - timedelta(hours=lookback_hours)
-                
+
                 try:
                     articles_df = opoint.search_site_and_articles(
                         search_text=symbol_search,
@@ -448,65 +488,85 @@ def analyze_news(
                         start_date=start_date,
                         end_date=end_date,
                     )
-                    
+
                     if articles_df.empty:
                         logger.warning(f"No news found for {symbol}")
                         continue
-                    
+
                     # Analyze sentiment of articles
                     symbol_sentiment = 0.0
                     symbol_articles = []
-                    
+
                     for _, article in articles_df.iterrows():
                         title = str(article.get("title", "")).lower()
                         summary = str(article.get("summary", "")).lower()
-                        
+
                         # Advanced sentiment scoring
-                        sentiment_score = _analyze_article_sentiment(title, summary, symbol)
+                        sentiment_score = _analyze_article_sentiment(
+                            title, summary, symbol
+                        )
                         market_impact = _assess_market_impact(title, summary, symbol)
                         importance_score = _calculate_news_importance(article, symbol)
-                        
+
                         symbol_sentiment += sentiment_score
-                        
-                        symbol_articles.append({
-                            "title": article.get("title", ""),
-                            "summary": article.get("summary", ""),
-                            "url": article.get("url", ""),
-                            "published_date": str(article.get("published_date", "")),
-                            "source_name": article.get("source_name", ""),
-                            "sentiment_score": sentiment_score,
-                            "market_impact": market_impact,
-                            "importance_score": importance_score,
-                            "weighted_sentiment": sentiment_score * importance_score
-                        })
-                    
+
+                        symbol_articles.append(
+                            {
+                                "title": article.get("title", ""),
+                                "summary": article.get("summary", ""),
+                                "url": article.get("url", ""),
+                                "published_date": str(
+                                    article.get("published_date", "")
+                                ),
+                                "source_name": article.get("source_name", ""),
+                                "sentiment_score": sentiment_score,
+                                "market_impact": market_impact,
+                                "importance_score": importance_score,
+                                "weighted_sentiment": sentiment_score
+                                * importance_score,
+                            }
+                        )
+
                     # Average sentiment for this symbol
                     if len(symbol_articles) > 0:
                         avg_sentiment = symbol_sentiment / len(symbol_articles)
                     else:
                         avg_sentiment = 0.0
-                    
+
                     overall_sentiment_scores.append(avg_sentiment)
-                    
-                    all_news_data.append({
-                        "symbol": symbol,
-                        "sentiment_score": avg_sentiment,
-                        "article_count": len(symbol_articles),
-                        "articles": symbol_articles[:5],  # Top 5 articles
-                    })
-                    
+
+                    all_news_data.append(
+                        {
+                            "symbol": symbol,
+                            "sentiment_score": avg_sentiment,
+                            "article_count": len(symbol_articles),
+                            "articles": symbol_articles[:5],  # Top 5 articles
+                        }
+                    )
+
                 except Exception as symbol_error:
                     logger.error(f"Error analyzing news for {symbol}: {symbol_error}")
                     continue
-            
+
             # Calculate overall sentiment
             if overall_sentiment_scores:
                 avg_sentiment = np.mean(overall_sentiment_scores)
-                sentiment_range = (min(overall_sentiment_scores), max(overall_sentiment_scores))
+                sentiment_range = (
+                    min(overall_sentiment_scores),
+                    max(overall_sentiment_scores),
+                )
             else:
                 avg_sentiment = 0.0
                 sentiment_range = (0.0, 0.0)
-                all_news_data = [{"symbol": s, "sentiment_score": 0.0, "article_count": 0, "articles": []} for s in symbols]
+                all_news_data = [
+                    {
+                        "symbol": s,
+                        "sentiment_score": 0.0,
+                        "article_count": 0,
+                        "articles": [],
+                    }
+                    for s in symbols
+                ]
 
         # Categorize sentiment
         if avg_sentiment > 0.2:
@@ -518,13 +578,23 @@ def analyze_news(
 
         result = {
             "symbols_analyzed": symbols,
-            "news_articles": sum(data.get("article_count", 0) for data in all_news_data) if 'all_news_data' in locals() else len(news_sentiment) if 'news_sentiment' in locals() else 0,
+            "news_articles": sum(data.get("article_count", 0) for data in all_news_data)
+            if "all_news_data" in locals()
+            else len(news_sentiment)
+            if "news_sentiment" in locals()
+            else 0,
             "average_sentiment": avg_sentiment,
             "sentiment_range": sentiment_range,
             "sentiment_category": sentiment_category,
             "lookback_hours": lookback_hours,
-            "news_data": all_news_data if 'all_news_data' in locals() else [{"symbol": s, "sentiment_score": 0.0, "articles": []} for s in symbols],
-            "detailed_sentiment": [news.model_dump() for news in news_sentiment] if 'news_sentiment' in locals() else [],
+            "news_data": all_news_data
+            if "all_news_data" in locals()
+            else [
+                {"symbol": s, "sentiment_score": 0.0, "articles": []} for s in symbols
+            ],
+            "detailed_sentiment": [news.model_dump() for news in news_sentiment]
+            if "news_sentiment" in locals()
+            else [],
             "timestamp": datetime.now().isoformat(),
             "data_source": "opoint" if settings.opoint_api_key else "mock",
         }
@@ -631,6 +701,8 @@ Available financial analysis tools:
 - assess_risk: Portfolio and trade risk assessment with VaR, volatility, and drawdown analysis
 - analyze_news: Advanced news sentiment analysis using Opoint API with financial-specific keywords and market impact assessment
 - run_backtest: Historical strategy validation and performance metrics
+- analyze_web_content: Extract structured financial data from any web page using Firecrawl API (earnings reports, analyst reports, financial news)
+- research_financial_topic: Comprehensive web research on financial topics with sentiment analysis and data extraction from multiple sources (max 5 sources for performance)
 - report_completion: Provide final trading recommendations and analysis summary
 
 Financial data capabilities:
@@ -639,6 +711,8 @@ Financial data capabilities:
 • Risk metrics: Value at Risk (VaR), Sharpe ratio, Maximum Drawdown
 • Sentiment analysis: News and social media sentiment scoring
 • Multi-agent forecasting: Bullish, bearish, and technical perspectives
+• Web scraping: Extract financial data from any website using Firecrawl API
+• Comprehensive research: Multi-source financial intelligence gathering
 
 Current market memory: {len(DB.memory.market_data)} data points, {len(DB.memory.forecasts)} forecasts
 Paper trading mode: {"Enabled" if settings.enable_paper_trading else "Disabled"}
@@ -907,43 +981,73 @@ def _get_company_name(symbol: str) -> str:
 def _analyze_article_sentiment(title: str, summary: str, symbol: str) -> float:
     """Advanced sentiment analysis for financial news"""
     text = title + " " + summary
-    
+
     # Enhanced sentiment keywords (financial-specific)
     sentiment_indicators = {
         # Very positive (0.8-1.0)
-        "breakthrough": 0.9, "record": 0.8, "soars": 0.9, "surge": 0.8,
-        "outperforms": 0.7, "beats expectations": 0.9, "all-time high": 1.0,
-        
-        # Positive (0.3-0.7)  
-        "buy": 0.6, "bull": 0.7, "growth": 0.5, "up": 0.4, "rise": 0.5,
-        "gain": 0.6, "profit": 0.7, "strong": 0.6, "beat": 0.7, "exceed": 0.6,
-        "upgrade": 0.7, "optimistic": 0.6, "bullish": 0.8, "rally": 0.7,
-        
+        "breakthrough": 0.9,
+        "record": 0.8,
+        "soars": 0.9,
+        "surge": 0.8,
+        "outperforms": 0.7,
+        "beats expectations": 0.9,
+        "all-time high": 1.0,
+        # Positive (0.3-0.7)
+        "buy": 0.6,
+        "bull": 0.7,
+        "growth": 0.5,
+        "up": 0.4,
+        "rise": 0.5,
+        "gain": 0.6,
+        "profit": 0.7,
+        "strong": 0.6,
+        "beat": 0.7,
+        "exceed": 0.6,
+        "upgrade": 0.7,
+        "optimistic": 0.6,
+        "bullish": 0.8,
+        "rally": 0.7,
         # Negative (-0.3 to -0.7)
-        "sell": -0.6, "bear": -0.7, "down": -0.4, "fall": -0.5, "loss": -0.6,
-        "weak": -0.5, "miss": -0.7, "decline": -0.5, "cut": -0.6, "warning": -0.6,
-        "downgrade": -0.7, "pessimistic": -0.6, "bearish": -0.8, "plunge": -0.8,
-        
+        "sell": -0.6,
+        "bear": -0.7,
+        "down": -0.4,
+        "fall": -0.5,
+        "loss": -0.6,
+        "weak": -0.5,
+        "miss": -0.7,
+        "decline": -0.5,
+        "cut": -0.6,
+        "warning": -0.6,
+        "downgrade": -0.7,
+        "pessimistic": -0.6,
+        "bearish": -0.8,
+        "plunge": -0.8,
         # Very negative (-0.8 to -1.0)
-        "crash": -0.9, "collapse": -1.0, "crisis": -0.8, "disaster": -0.9,
-        "scandal": -0.8, "investigation": -0.7, "lawsuit": -0.6, "fraud": -1.0
+        "crash": -0.9,
+        "collapse": -1.0,
+        "crisis": -0.8,
+        "disaster": -0.9,
+        "scandal": -0.8,
+        "investigation": -0.7,
+        "lawsuit": -0.6,
+        "fraud": -1.0,
     }
-    
+
     # Calculate weighted sentiment
     total_score = 0.0
     word_count = 0
-    
+
     for phrase, weight in sentiment_indicators.items():
         if phrase in text:
             total_score += weight
             word_count += 1
-    
+
     # Normalize by word count to avoid bias toward longer articles
     if word_count > 0:
         sentiment_score = total_score / word_count
     else:
         sentiment_score = 0.0
-    
+
     # Company-specific adjustments (companies with different volatility)
     volatility_multipliers = {
         "TSLA": 1.2,  # Tesla news tends to be more impactful
@@ -951,7 +1055,7 @@ def _analyze_article_sentiment(title: str, summary: str, symbol: str) -> float:
         "AAPL": 0.9,  # More stable, less reactive
         "MSFT": 0.9,  # Enterprise stability
     }
-    
+
     multiplier = volatility_multipliers.get(symbol, 1.0)
     return max(-1.0, min(1.0, sentiment_score * multiplier))
 
@@ -959,78 +1063,102 @@ def _analyze_article_sentiment(title: str, summary: str, symbol: str) -> float:
 def _assess_market_impact(title: str, summary: str, symbol: str) -> float:
     """Assess potential market impact of news (causality analysis)"""
     text = title + " " + summary
-    
+
     # Market-moving event indicators
     high_impact_events = [
-        "earnings", "revenue", "guidance", "acquisition", "merger", "ipo",
-        "fda approval", "partnership", "contract", "lawsuit", "regulatory",
-        "ceo", "layoffs", "restructuring", "dividend", "stock split",
-        "buyback", "bankruptcy", "delisting", "investigation"
+        "earnings",
+        "revenue",
+        "guidance",
+        "acquisition",
+        "merger",
+        "ipo",
+        "fda approval",
+        "partnership",
+        "contract",
+        "lawsuit",
+        "regulatory",
+        "ceo",
+        "layoffs",
+        "restructuring",
+        "dividend",
+        "stock split",
+        "buyback",
+        "bankruptcy",
+        "delisting",
+        "investigation",
     ]
-    
+
     medium_impact_events = [
-        "analyst", "rating", "price target", "recommendation", "conference",
-        "product launch", "expansion", "hiring", "investment", "funding"
+        "analyst",
+        "rating",
+        "price target",
+        "recommendation",
+        "conference",
+        "product launch",
+        "expansion",
+        "hiring",
+        "investment",
+        "funding",
     ]
-    
+
     # Score impact potential
     impact_score = 0.0
-    
+
     for event in high_impact_events:
         if event in text:
             impact_score += 0.8
-    
+
     for event in medium_impact_events:
         if event in text:
             impact_score += 0.4
-    
+
     # Time sensitivity (recent events have higher impact)
     return min(1.0, impact_score)
 
 
 def _calculate_news_importance(article: dict, symbol: str) -> float:
     """Calculate news importance score based on source and content quality"""
-    
+
     # Source credibility weights
     source_weights = {
         "reuters": 1.0,
-        "bloomberg": 1.0, 
+        "bloomberg": 1.0,
         "wall street journal": 0.95,
         "financial times": 0.95,
         "cnbc": 0.8,
         "marketwatch": 0.7,
         "seeking alpha": 0.6,
-        "yahoo finance": 0.5
+        "yahoo finance": 0.5,
     }
-    
+
     source_name = str(article.get("source_name", "")).lower()
     source_weight = 0.3  # Default for unknown sources
-    
+
     for source, weight in source_weights.items():
         if source in source_name:
             source_weight = weight
             break
-    
+
     # Content quality indicators
     title = str(article.get("title", ""))
     summary = str(article.get("summary", ""))
-    
+
     quality_score = 0.5  # Base score
-    
+
     # Longer, more detailed articles tend to be more important
     if len(summary) > 200:
         quality_score += 0.2
     elif len(summary) > 100:
         quality_score += 0.1
-    
+
     # Articles with specific numbers/data are more credible
     if any(char.isdigit() for char in title + summary):
         quality_score += 0.1
-    
+
     # Articles mentioning the symbol directly are more relevant
     if symbol.upper() in title.upper():
         quality_score += 0.2
-    
+
     return min(1.0, source_weight * quality_score)
 
 

@@ -8,6 +8,7 @@ This is a Schema-Guided Reasoning (SGR) multi-agent system for financial forecas
 
 - Install dependencies: `uv sync`
 - Run the SGR trading agent: `uv run python sgr_trading_agent.py`
+- Run web interface (Chainlit): `uv run chainlit run trading_demo_app.py`
 - Run market data collector: `uv run python market_data_collector.py`
 - Run backtesting suite: `uv run python backtester.py`
 

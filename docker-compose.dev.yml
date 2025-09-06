@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  # Development version - без tunnel, только локальная разработка
+  sgr-trading-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: sgr-trading-dev
+    env_file:
+      - .env
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - PYTHONPATH=/app
+      - ENABLE_PAPER_TRADING=true
+      - CHAINLIT_AUTO_RELOAD=true
+    volumes:
+      - .:/app:rw
+      - /app/.venv
+    ports:
+      - "8000:8000"
+    restart: "no"
+    command: ["chainlit", "run", "trading_demo_app.py", "--host", "0.0.0.0", "--port", "8000", "--watch"]
+    networks:
+      - dev_network
+
+networks:
+  dev_network:
+    driver: bridge

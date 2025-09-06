@@ -42,6 +42,9 @@ class TradingAgentSettings(BaseSettings):
     )
     news_api_key: Optional[str] = Field(default=None, description="News API key")
     opoint_api_key: Optional[str] = Field(default=None, description="Opoint API key")
+    firecrawl_api_key: Optional[str] = Field(
+        default=None, description="Firecrawl API key for web scraping"
+    )
 
     # Trading Platforms (Demo/Paper Trading)
     binance_api_key: Optional[str] = Field(default=None, description="Binance API key")
@@ -149,6 +152,8 @@ def get_available_data_sources() -> dict:
         sources["news"].append("news_api")
     if settings.opoint_api_key:
         sources["news"].append("opoint")
+    if settings.firecrawl_api_key:
+        sources["news"].append("firecrawl_web_scraping")
 
     # Check economic data
     if settings.fred_api_key:
