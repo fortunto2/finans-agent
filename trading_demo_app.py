@@ -33,6 +33,10 @@ from sgr_trading_agent import (
     assess_risk,
     analyze_news,
     run_backtest,
+    create_chat_session,
+    save_chat_message,
+    get_chat_history,
+    dispatch,
     DB,
 )
 
@@ -61,9 +65,62 @@ client = AsyncAzureOpenAI(
 # Trading cache for conversation history
 TRADING_CACHE = {"analyses": [], "forecasts": [], "recommendations": []}
 
+# Global session tracking
+CURRENT_SESSION = {"session_id": None, "session_name": None}
+
 # =============================================================================
 # CHAINLIT HELPER FUNCTIONS
 # =============================================================================
+
+
+async def ensure_chat_session() -> str:
+    """Ensure we have an active chat session and return session_id"""
+    if CURRENT_SESSION["session_id"] is None:
+        # Create new session with timestamp
+        from datetime import datetime
+
+        session_name = f"Trading Analysis - {datetime.now().strftime('%Y-%m-%d %H:%M')}"
+
+        try:
+            session_result = create_chat_session(
+                session_name, "chainlit_user", "trading_analysis"
+            )
+            if session_result["success"]:
+                CURRENT_SESSION["session_id"] = session_result["session_id"]
+                CURRENT_SESSION["session_name"] = session_result["session_name"]
+
+                # Send notification to user
+                await cl.Message(
+                    author="🧠 Память",
+                    content=f"✅ Создана новая сессия: `{session_result['session_id']}`\n\n"
+                    f"Все сообщения этого чата будут сохраняться в памяти агента для будущих сессий.",
+                ).send()
+            else:
+                # Fallback session_id
+                CURRENT_SESSION["session_id"] = "fallback_session"
+
+        except Exception as e:
+            # Fallback session_id
+            CURRENT_SESSION["session_id"] = "fallback_session"
+            await cl.Message(
+                author="⚠️ Память",
+                content=f"Не удалось создать сессию в памяти: {e}\n\nИспользуется временная сессия.",
+            ).send()
+
+    return CURRENT_SESSION["session_id"]
+
+
+async def save_message_to_memory(
+    content: str, message_type: str, metadata: Dict[str, Any] = None
+) -> None:
+    """Save message to SGR memory"""
+    try:
+        session_id = await ensure_chat_session()
+        if session_id != "fallback_session":
+            save_chat_message(session_id, message_type, content, metadata)
+    except Exception as e:
+        # Silent fail - memory is not critical for chat functionality
+        pass
 
 
 async def display_sgr_response(response: SGRTradingResponse, step_num: int) -> None:
@@ -752,42 +809,35 @@ async def run_sgr_step(task: str, conversation_log: List[Dict]) -> SGRTradingRes
     deployment_name = settings.azure_openai_deployment_name
 
     # Prepare system prompt
-    system_prompt = f"""Вы - профессиональный финансовый торговый ассистент, использующий Schema-Guided Reasoning для анализа рынка.
+    system_prompt = f"""Вы - финансовый ассистент с Schema-Guided Reasoning.
 
-Доступные инструменты анализа:
-- get_market_data: Получить рыночные данные в реальном времени (symbols, timeframe, period)
-- analyze_trading_opportunity: Комплексный анализ торговых возможностей с техническими индикаторами
-- generate_forecast: Создать вероятностные прогнозы с использованием нескольких агентов
-- assess_risk: Оценка риска портфеля и торговли с VaR анализом
-- analyze_news: Анализ новостных настроений с использованием Opoint API
-- run_backtest: Историческая валидация стратегии
-- analyze_web_content: Извлечь структурированные финансовые данные с любой веб-страницы (отчеты о прибылях, аналитические отчеты, финансовые новости)
-- research_financial_topic: Комплексное веб-исследование финансовых тем с анализом sentiment и извлечением данных (макс. 5 источников)
-- report_completion: Предоставить финальные рекомендации
+Инструменты:
+- get_market_data: Рыночные данные (symbols, timeframe, period)
+- analyze_trading_opportunity: Анализ торговых возможностей
+- generate_forecast: Вероятностные прогнозы
+- assess_risk: Оценка рисков с VaR
+- analyze_news: Анализ новостей
+- run_backtest: Валидация стратегии
+- analyze_web_content: Веб-скрапинг финансовых данных
+- research_financial_topic: Исследование (макс. 5 источников)
+- report_completion: Финальные рекомендации
+- get_chat_history: Получить историю чата (session_id, limit, message_types)
+- save_chat_message: Сохранить сообщение (session_id, message_type, content)
+- create_trading_rule: Создать торговое правило (description, type, parameters)
+- get_trading_memory: Получить память о правилах (memory_type, filter_by)
 
-Возможности:
-• Данные рынка в реальном времени через Yahoo Finance
-• Технические индикаторы: RSI, MACD, Bollinger Bands
-• Метрики риска: VaR, Sharpe ratio, максимальная просадка
-• Мультиагентное прогнозирование
-• Анализ настроений новостей
-• Веб-скрапинг: извлечение финансовых данных с любых веб-сайтов через Firecrawl API
-• Комплексное исследование: сбор финансовой информации из множества источников
+Задача: {task}
 
-Настройки риска: Макс позиция {settings.max_position_size:.1%}, Макс просадка {settings.max_daily_drawdown:.1%}
-Режим бумажной торговли: {"Включен" if settings.enable_paper_trading else "Выключен"}
+Риски: Макс позиция {settings.max_position_size:.1%}, макс просадка {settings.max_daily_drawdown:.1%}
+Режим: {"Бумажная торговля" if settings.enable_paper_trading else "Реальная торговля"}
 
-Ваша задача: {task}
+Алгоритм:
+1. Собрать рыночные данные
+2. Провести анализ
+3. Оценить риски
+4. Дать рекомендации через report_completion
 
-Инструкции:
-- Начните со сбора рыночных данных
-- Проведите технический и фундаментальный анализ
-- Оцените риски перед рекомендацией сделок
-- Учитывайте новостной фон
-- Предоставьте конкретные цены входа/выхода
-- Завершите report_completion с детальными рекомендациями
-
-ОТВЕЧАЙТЕ ВСЕГДА НА РУССКОМ ЯЗЫКЕ."""
+ОТВЕЧАЙТЕ НА РУССКОМ."""
 
     messages = [{"role": "system", "content": system_prompt}] + conversation_log
 
@@ -796,7 +846,7 @@ async def run_sgr_step(task: str, conversation_log: List[Dict]) -> SGRTradingRes
         model=deployment_name,
         response_format=SGRTradingResponse,
         messages=messages,
-        max_completion_tokens=1000,
+        max_completion_tokens=2000,  # Increased from 1000 to 2000
     )
 
     return completion.choices[0].message.parsed
@@ -807,11 +857,22 @@ async def process_trading_request(task: str, max_steps: int = 10) -> None:
 
     conversation_log = []
 
+    # Save user message to memory
+    await save_message_to_memory(task, "user", {"task_type": "trading_analysis"})
+
     # Initial message
+    start_msg = (
+        f"**Начинаю финансовый анализ:** {task}\n\n_Максимум шагов: {max_steps}_"
+    )
     await cl.Message(
         author="🚀 Старт",
-        content=f"**Начинаю финансовый анализ:** {task}\n\n_Максимум шагов: {max_steps}_",
+        content=start_msg,
     ).send()
+
+    # Save start message to memory
+    await save_message_to_memory(
+        start_msg, "system", {"message_type": "analysis_start"}
+    )
 
     for step_num in range(1, max_steps + 1):
         try:
@@ -862,7 +923,7 @@ async def process_trading_request(task: str, max_steps: int = 10) -> None:
             tool_name = sgr_response.function.tool
             tool_params = sgr_response.function.model_dump()
 
-            result = await execute_tool(tool_name, tool_params)
+            result = dispatch(sgr_response.function)
 
             # Display result
             await display_tool_result(tool_name, result)
@@ -914,10 +975,22 @@ async def process_trading_request(task: str, max_steps: int = 10) -> None:
             break
 
     # Final message
+    final_msg = f"**Анализ завершён за {step_num} шагов**"
     await cl.Message(
         author="📊 Итог",
-        content=f"**Анализ завершён за {step_num} шагов**",
+        content=final_msg,
     ).send()
+
+    # Save final message to memory
+    await save_message_to_memory(
+        final_msg,
+        "system",
+        {
+            "message_type": "analysis_complete",
+            "steps_completed": step_num,
+            "task": task,
+        },
+    )
 
 
 # =============================================================================
@@ -947,9 +1020,50 @@ def format_tool_name(tool: str) -> str:
 # =============================================================================
 
 
+async def display_chat_history_summary() -> None:
+    """Display chat history summary from memory"""
+    try:
+        history = get_chat_history(limit=10)
+        if history["success"] and history["total_messages"] > 0:
+            sessions_count = history["total_sessions"]
+            messages_count = history["total_messages"]
+
+            history_msg = f"📚 **История чатов в памяти:**\n\n"
+            history_msg += f"• Всего сессий: {sessions_count}\n"
+            history_msg += f"• Всего сообщений: {messages_count}\n\n"
+
+            if history["messages"]:
+                history_msg += "**Последние сообщения:**\n"
+                for msg in history["messages"][-3:]:  # Last 3 messages
+                    msg_type = (
+                        "👤"
+                        if msg["message_type"] == "user"
+                        else "🤖"
+                        if msg["message_type"] == "assistant"
+                        else "🔧"
+                    )
+                    content_preview = (
+                        msg["content"][:100] + "..."
+                        if len(msg["content"]) > 100
+                        else msg["content"]
+                    )
+                    history_msg += f"{msg_type} {content_preview}\n"
+
+            await cl.Message(
+                author="🧠 Память",
+                content=history_msg,
+            ).send()
+    except Exception as e:
+        # Silent fail - history is not critical
+        pass
+
+
 @cl.on_chat_start
 async def start_chat():
     """Chat initialization."""
+
+    # Initialize session
+    await ensure_chat_session()
 
     # Check configuration
     try:
@@ -978,6 +1092,7 @@ async def start_chat():
 - Бэктестирование стратегий
 - 🌐 **Веб-скрапинг:** извлечение данных с любых финансовых сайтов
 - 🔍 **Комплексное исследование:** анализ множества источников одновременно
+- 🧠 **Постоянная память:** сохранение истории чатов и торговых правил
 - Торговые рекомендации с ценами входа/выхода
 
 **📊 Статус системы:**
@@ -999,6 +1114,9 @@ async def start_chat():
     """
 
     await cl.Message(author="🤖 Система", content=welcome_msg).send()
+
+    # Display chat history if available
+    await display_chat_history_summary()
 
 
 @cl.on_message

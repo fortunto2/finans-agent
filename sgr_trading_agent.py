@@ -31,10 +31,20 @@ from models import (
     NewsAnalysisRequest,
     WebAnalysisRequest,
     ComprehensiveWebResearch,
+    CreateTradingRule,
+    GetTradingMemory,
+    UpdateTradingRule,
+    DeleteTradingRule,
+    CreateChatSession,
+    SaveChatMessage,
+    GetChatHistory,
     ReportTaskCompletion,
     SGRTradingResponse,
     TradingMemory,
     MarketData,
+    TradingRuleParameters,
+    ChatMessageMetadata,
+    MemoryFilterCriteria,
     # MarketDataResponse,  # Not used directly
     ForecastResult,
     # TradingRecommendation,  # Not used directly
@@ -69,6 +79,14 @@ __all__ = [
     "assess_risk",
     "analyze_news",
     "run_backtest",
+    "create_trading_rule",
+    "get_trading_memory",
+    "update_trading_rule",
+    "delete_trading_rule",
+    "create_chat_session",
+    "save_chat_message",
+    "get_chat_history",
+    "dispatch",
 ]
 
 # Setup logging
@@ -77,36 +95,290 @@ logger = logging.getLogger(__name__)
 
 
 class FinancialTradingDB:
-    """In-memory database for financial trading data"""
+    """In-memory database for financial trading data (SGR style)"""
 
     def __init__(self):
-        self.memory = TradingMemory()
-        self.forecasts_history = []
-        self.analysis_history = []
-        self.customer_rules = []
+        # SGR-style simple in-memory database structure
+        self.data = {
+            "rules": [],  # Trading rules created by agent
+            "memory": TradingMemory(),  # Structured memory
+            "forecasts_history": [],  # Historical forecasts
+            "analysis_history": [],  # Analysis records
+            "customer_rules": [],  # Customer-specific rules
+            "sessions": {},  # Chat sessions data
+            "preferences": {},  # Agent preferences
+            "chat_messages": {},  # Messages by session_id
+        }
 
         logger.info("Financial Trading Agent initialized with SGR pattern")
 
     def add_market_data(self, market_data: List[MarketData]):
         """Add market data to memory"""
-        self.memory.market_data.extend(market_data)
+        self.data["memory"].market_data.extend(market_data)
         # Keep only last 1000 records to manage memory
-        if len(self.memory.market_data) > 1000:
-            self.memory.market_data = self.memory.market_data[-1000:]
+        if len(self.data["memory"].market_data) > 1000:
+            self.data["memory"].market_data = self.data["memory"].market_data[-1000:]
 
     def add_forecast(self, forecast: ForecastResult):
         """Add forecast to memory"""
-        self.memory.forecasts.append(forecast)
-        self.forecasts_history.append(
+        self.data["memory"].forecasts.append(forecast)
+        self.data["forecasts_history"].append(
             {"forecast": forecast.model_dump(), "timestamp": datetime.now().isoformat()}
         )
 
     def get_recent_analysis(self, symbol: str = None, limit: int = 5) -> List[Dict]:
         """Get recent analysis for symbol or all"""
         if symbol:
-            relevant = [a for a in self.analysis_history if symbol in str(a)]
+            relevant = [a for a in self.data["analysis_history"] if symbol in str(a)]
             return relevant[-limit:] if relevant else []
-        return self.analysis_history[-limit:]
+        return self.data["analysis_history"][-limit:]
+
+    def create_rule(
+        self,
+        rule_description: str,
+        rule_type: str = "general",
+        parameters: Dict[str, Any] = None,
+        priority: int = 1,
+    ) -> Dict[str, Any]:
+        """Create a new trading rule (SGR style)"""
+        import uuid
+
+        rule_id = f"rule_{len(self.data['rules']) + 1}_{uuid.uuid4().hex[:8]}"
+        rule = {
+            "rule_id": rule_id,
+            "description": rule_description,
+            "rule_type": rule_type,
+            "parameters": parameters or {},
+            "priority": priority,
+            "active": True,
+            "created_at": datetime.now().isoformat(),
+            "last_used": None,
+            "usage_count": 0,
+        }
+
+        self.data["rules"].append(rule)
+        logger.info(f"Created trading rule: {rule_id} - {rule_description}")
+        return rule
+
+    def get_trading_memory(
+        self, memory_type: str = "all", filter_by: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Get trading memory and rules (SGR style)"""
+        result = {}
+
+        if memory_type in ["all", "rules"]:
+            rules = self.data["rules"]
+            if filter_by:
+                # Simple filtering
+                if "rule_type" in filter_by:
+                    rules = [
+                        r for r in rules if r["rule_type"] == filter_by["rule_type"]
+                    ]
+                if "active" in filter_by:
+                    rules = [r for r in rules if r["active"] == filter_by["active"]]
+            result["rules"] = rules
+
+        if memory_type in ["all", "market_data"]:
+            result["market_data"] = [
+                data.model_dump() for data in self.data["memory"].market_data[-50:]
+            ]  # Last 50 records
+
+        if memory_type in ["all", "forecasts"]:
+            result["forecasts"] = [
+                f.model_dump() for f in self.data["memory"].forecasts[-20:]
+            ]  # Last 20 forecasts
+
+        if memory_type in ["all", "trades"]:
+            result["recent_trades"] = [
+                t.model_dump() for t in self.data["memory"].recent_trades[-20:]
+            ]
+
+        if memory_type in ["all", "analysis"]:
+            result["recent_analysis"] = self.data["analysis_history"][
+                -10:
+            ]  # Last 10 analyses
+
+        # Add summary stats
+        result["summary"] = {
+            "total_rules": len(self.data["rules"]),
+            "active_rules": len([r for r in self.data["rules"] if r["active"]]),
+            "market_data_points": len(self.data["memory"].market_data),
+            "total_forecasts": len(self.data["memory"].forecasts),
+            "total_trades": len(self.data["memory"].recent_trades),
+            "total_analyses": len(self.data["analysis_history"]),
+        }
+
+        return result
+
+    def update_rule(
+        self,
+        rule_id: str,
+        new_description: str = None,
+        new_parameters: Dict[str, Any] = None,
+        new_priority: int = None,
+    ) -> Dict[str, Any]:
+        """Update existing trading rule"""
+        for rule in self.data["rules"]:
+            if rule["rule_id"] == rule_id:
+                if new_description:
+                    rule["description"] = new_description
+                if new_parameters:
+                    rule["parameters"].update(new_parameters)
+                if new_priority:
+                    rule["priority"] = new_priority
+                rule["last_modified"] = datetime.now().isoformat()
+                logger.info(f"Updated trading rule: {rule_id}")
+                return rule
+
+        raise ValueError(f"Rule {rule_id} not found")
+
+    def delete_rule(self, rule_id: str, reason: str) -> Dict[str, Any]:
+        """Delete trading rule"""
+        for i, rule in enumerate(self.data["rules"]):
+            if rule["rule_id"] == rule_id:
+                deleted_rule = self.data["rules"].pop(i)
+                deleted_rule["deleted_at"] = datetime.now().isoformat()
+                deleted_rule["deletion_reason"] = reason
+                logger.info(f"Deleted trading rule: {rule_id} - {reason}")
+                return deleted_rule
+
+        raise ValueError(f"Rule {rule_id} not found")
+
+    def create_chat_session(
+        self,
+        session_name: str,
+        user_id: str = "default",
+        session_type: str = "trading_analysis",
+    ) -> Dict[str, Any]:
+        """Create a new chat session (SGR style)"""
+        import uuid
+
+        session_id = f"session_{len(self.data['sessions']) + 1}_{uuid.uuid4().hex[:8]}"
+        session = {
+            "session_id": session_id,
+            "session_name": session_name,
+            "user_id": user_id,
+            "session_type": session_type,
+            "created_at": datetime.now().isoformat(),
+            "last_activity": datetime.now().isoformat(),
+            "message_count": 0,
+            "active": True,
+        }
+
+        self.data["sessions"][session_id] = session
+        self.data["chat_messages"][session_id] = []
+        logger.info(f"Created chat session: {session_id} - {session_name}")
+        return session
+
+    def save_chat_message(
+        self,
+        session_id: str,
+        message_type: str,
+        content: str,
+        metadata: Dict[str, Any] = None,
+    ) -> Dict[str, Any]:
+        """Save chat message to session (SGR style)"""
+        if session_id not in self.data["sessions"]:
+            raise ValueError(f"Session {session_id} not found")
+
+        message = {
+            "message_id": f"msg_{len(self.data['chat_messages'][session_id]) + 1}",
+            "session_id": session_id,
+            "message_type": message_type,
+            "content": content,
+            "metadata": metadata or {},
+            "timestamp": datetime.now().isoformat(),
+        }
+
+        # Add message to session
+        self.data["chat_messages"][session_id].append(message)
+
+        # Update session stats
+        session = self.data["sessions"][session_id]
+        session["message_count"] += 1
+        session["last_activity"] = datetime.now().isoformat()
+
+        logger.info(f"Saved {message_type} message to session {session_id}")
+        return message
+
+    def get_chat_history(
+        self, session_id: str = None, limit: int = 50, message_types: List[str] = None
+    ) -> Dict[str, Any]:
+        """Get chat history from memory (SGR style)"""
+        if message_types is None:
+            message_types = ["user", "assistant"]
+
+        result = {
+            "sessions": [],
+            "messages": [],
+            "total_sessions": len(self.data["sessions"]),
+            "total_messages": 0,
+        }
+
+        if session_id:
+            # Get specific session
+            if session_id not in self.data["sessions"]:
+                raise ValueError(f"Session {session_id} not found")
+
+            session = self.data["sessions"][session_id]
+            messages = self.data["chat_messages"][session_id]
+
+            # Filter by message types
+            filtered_messages = [
+                msg for msg in messages if msg["message_type"] in message_types
+            ]
+
+            # Apply limit
+            if limit > 0:
+                filtered_messages = filtered_messages[-limit:]
+
+            result["sessions"] = [session]
+            result["messages"] = filtered_messages
+            result["total_messages"] = len(filtered_messages)
+
+        else:
+            # Get all sessions
+            result["sessions"] = list(self.data["sessions"].values())
+
+            # Get recent messages from all sessions
+            all_messages = []
+            for sess_id, messages in self.data["chat_messages"].items():
+                for msg in messages:
+                    if msg["message_type"] in message_types:
+                        all_messages.append(msg)
+
+            # Sort by timestamp and apply limit
+            all_messages.sort(key=lambda x: x["timestamp"])
+            if limit > 0:
+                all_messages = all_messages[-limit:]
+
+            result["messages"] = all_messages
+            result["total_messages"] = len(all_messages)
+
+        logger.info(
+            f"Retrieved chat history: {len(result['messages'])} messages from {len(result['sessions'])} sessions"
+        )
+        return result
+
+    @property
+    def memory(self):
+        """Backward compatibility - access to TradingMemory"""
+        return self.data["memory"]
+
+    @property
+    def forecasts_history(self):
+        """Backward compatibility - access to forecasts history"""
+        return self.data["forecasts_history"]
+
+    @property
+    def analysis_history(self):
+        """Backward compatibility - access to analysis history"""
+        return self.data["analysis_history"]
+
+    @property
+    def customer_rules(self):
+        """Backward compatibility - access to customer rules"""
+        return self.data["customer_rules"]
 
 
 # Global database instance
@@ -172,6 +444,43 @@ def dispatch(cmd) -> Union[str, Dict[str, Any], List[Dict[str, Any]]]:
             cmd.time_range,
         )
 
+    elif isinstance(cmd, CreateTradingRule):
+        # Convert TradingRuleParameters to dict for internal functions
+        params_dict = cmd.parameters.model_dump() if cmd.parameters else {}
+        return create_trading_rule(
+            cmd.rule_description, cmd.rule_type, params_dict, cmd.priority
+        )
+
+    elif isinstance(cmd, GetTradingMemory):
+        # Convert MemoryFilterCriteria to dict for internal functions
+        filter_dict = cmd.filter_by.model_dump() if cmd.filter_by else None
+        return get_trading_memory(cmd.memory_type, filter_dict)
+
+    elif isinstance(cmd, UpdateTradingRule):
+        # Convert TradingRuleParameters to dict for internal functions
+        new_params_dict = (
+            cmd.new_parameters.model_dump() if cmd.new_parameters else None
+        )
+        return update_trading_rule(
+            cmd.rule_id, cmd.new_description, new_params_dict, cmd.new_priority
+        )
+
+    elif isinstance(cmd, DeleteTradingRule):
+        return delete_trading_rule(cmd.rule_id, cmd.reason)
+
+    elif isinstance(cmd, CreateChatSession):
+        return create_chat_session(cmd.session_name, cmd.user_id, cmd.session_type)
+
+    elif isinstance(cmd, SaveChatMessage):
+        # Convert ChatMessageMetadata to dict for internal functions
+        metadata_dict = cmd.metadata.model_dump() if cmd.metadata else None
+        return save_chat_message(
+            cmd.session_id, cmd.message_type, cmd.content, metadata_dict
+        )
+
+    elif isinstance(cmd, GetChatHistory):
+        return get_chat_history(cmd.session_id, cmd.limit, cmd.message_types)
+
     elif isinstance(cmd, ReportTaskCompletion):
         # Display final answer to user
         console.print("\n" + "=" * 80)
@@ -215,6 +524,208 @@ def dispatch(cmd) -> Union[str, Dict[str, Any], List[Dict[str, Any]]]:
 
     else:
         return f"Unknown tool: {type(cmd)}"
+
+
+# ============ SGR Memory Management Functions ============
+
+
+def create_trading_rule(
+    rule_description: str,
+    rule_type: str = "general",
+    parameters: Dict[str, Any] = None,
+    priority: int = 1,
+) -> Dict[str, Any]:
+    """Create a trading rule in memory (SGR style)"""
+    try:
+        logger.info(f"Creating trading rule: {rule_description}")
+        rule = DB.create_rule(rule_description, rule_type, parameters, priority)
+
+        return {
+            "success": True,
+            "rule_id": rule["rule_id"],
+            "rule_description": rule["description"],
+            "rule_type": rule["rule_type"],
+            "parameters": rule["parameters"],
+            "priority": rule["priority"],
+            "created_at": rule["created_at"],
+            "message": f"Trading rule created successfully: {rule['rule_id']}",
+        }
+
+    except Exception as e:
+        logger.error(f"Error creating trading rule: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "rule_description": rule_description,
+        }
+
+
+def get_trading_memory(
+    memory_type: str = "all", filter_by: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """Get trading memory and rules (SGR style)"""
+    try:
+        logger.info(f"Retrieving trading memory: {memory_type}")
+        memory_data = DB.get_trading_memory(memory_type, filter_by)
+
+        return {
+            "success": True,
+            "memory_type": memory_type,
+            "filter_applied": filter_by,
+            "data": memory_data,
+            "message": f"Retrieved {memory_type} memory data successfully",
+        }
+
+    except Exception as e:
+        logger.error(f"Error retrieving trading memory: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "memory_type": memory_type,
+        }
+
+
+def update_trading_rule(
+    rule_id: str,
+    new_description: str = None,
+    new_parameters: Dict[str, Any] = None,
+    new_priority: int = None,
+) -> Dict[str, Any]:
+    """Update existing trading rule"""
+    try:
+        logger.info(f"Updating trading rule: {rule_id}")
+        updated_rule = DB.update_rule(
+            rule_id, new_description, new_parameters, new_priority
+        )
+
+        return {
+            "success": True,
+            "rule_id": rule_id,
+            "updated_rule": updated_rule,
+            "message": f"Trading rule {rule_id} updated successfully",
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating trading rule {rule_id}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "rule_id": rule_id,
+        }
+
+
+def delete_trading_rule(rule_id: str, reason: str) -> Dict[str, Any]:
+    """Delete trading rule from memory"""
+    try:
+        logger.info(f"Deleting trading rule: {rule_id}")
+        deleted_rule = DB.delete_rule(rule_id, reason)
+
+        return {
+            "success": True,
+            "rule_id": rule_id,
+            "deleted_rule": deleted_rule,
+            "deletion_reason": reason,
+            "message": f"Trading rule {rule_id} deleted successfully",
+        }
+
+    except Exception as e:
+        logger.error(f"Error deleting trading rule {rule_id}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "rule_id": rule_id,
+            "reason": reason,
+        }
+
+
+# ============ SGR Chat Management Functions ============
+
+
+def create_chat_session(
+    session_name: str, user_id: str = "default", session_type: str = "trading_analysis"
+) -> Dict[str, Any]:
+    """Create a new chat session in memory (SGR style)"""
+    try:
+        logger.info(f"Creating chat session: {session_name}")
+        session = DB.create_chat_session(session_name, user_id, session_type)
+
+        return {
+            "success": True,
+            "session_id": session["session_id"],
+            "session_name": session["session_name"],
+            "user_id": session["user_id"],
+            "session_type": session["session_type"],
+            "created_at": session["created_at"],
+            "message": f"Chat session created successfully: {session['session_id']}",
+        }
+
+    except Exception as e:
+        logger.error(f"Error creating chat session: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "session_name": session_name,
+        }
+
+
+def save_chat_message(
+    session_id: str, message_type: str, content: str, metadata: Dict[str, Any] = None
+) -> Dict[str, Any]:
+    """Save chat message to session memory (SGR style)"""
+    try:
+        logger.info(f"Saving {message_type} message to session {session_id}")
+        message = DB.save_chat_message(session_id, message_type, content, metadata)
+
+        return {
+            "success": True,
+            "message_id": message["message_id"],
+            "session_id": session_id,
+            "message_type": message_type,
+            "timestamp": message["timestamp"],
+            "message": f"Message saved to session {session_id}",
+        }
+
+    except Exception as e:
+        logger.error(f"Error saving message to session {session_id}: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "session_id": session_id,
+            "message_type": message_type,
+        }
+
+
+def get_chat_history(
+    session_id: str = None, limit: int = 50, message_types: List[str] = None
+) -> Dict[str, Any]:
+    """Get chat history from memory (SGR style)"""
+    try:
+        if message_types is None:
+            message_types = ["user", "assistant"]
+
+        logger.info(f"Retrieving chat history: session_id={session_id}, limit={limit}")
+        history = DB.get_chat_history(session_id, limit, message_types)
+
+        return {
+            "success": True,
+            "session_id": session_id,
+            "sessions": history["sessions"],
+            "messages": history["messages"],
+            "total_sessions": history["total_sessions"],
+            "total_messages": history["total_messages"],
+            "message_types": message_types,
+            "limit": limit,
+            "message": f"Retrieved {len(history['messages'])} messages from {len(history['sessions'])} sessions",
+        }
+
+    except Exception as e:
+        logger.error(f"Error retrieving chat history: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "session_id": session_id,
+            "limit": limit,
+        }
 
 
 def get_market_data(
@@ -703,6 +1214,12 @@ Available financial analysis tools:
 - run_backtest: Historical strategy validation and performance metrics
 - analyze_web_content: Extract structured financial data from any web page using Firecrawl API (earnings reports, analyst reports, financial news)
 - research_financial_topic: Comprehensive web research on financial topics with sentiment analysis and data extraction from multiple sources (max 5 sources for performance)
+
+Memory management tools (SGR style):
+- create_trading_rule: Create persistent trading rules and preferences in memory (risk_management, trading_preference, analysis_guideline)
+- get_trading_memory: Retrieve stored rules, market data, forecasts, trades, and analysis history with filtering
+- update_trading_rule: Modify existing trading rules with new parameters or descriptions
+- delete_trading_rule: Remove trading rules from memory with reason logging
 - report_completion: Provide final trading recommendations and analysis summary
 
 Financial data capabilities:
@@ -742,7 +1259,7 @@ Instructions for financial analysis:
             model=deployment_name,
             response_format=SGRTradingResponse,
             messages=messages,
-            max_completion_tokens=1000,
+            max_completion_tokens=8000,
         )
 
         sgr_response = completion.choices[0].message.parsed

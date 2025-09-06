@@ -388,6 +388,170 @@ class ResearchSummary(BaseModel):
     timestamp: datetime
 
 
+# ============ SGR Memory Management Tools ============
+
+
+class TradingRuleParameters(BaseModel):
+    """Trading rule parameters with known fields"""
+
+    max_position_size: Optional[float] = None
+    max_risk_per_trade: Optional[float] = None
+    stop_loss_required: Optional[bool] = None
+    position_sizing_method: Optional[str] = None
+    max_correlation: Optional[float] = None
+    sectors: Optional[List[str]] = None
+    min_market_cap: Optional[float] = None
+    market_condition: Optional[str] = None
+    exclude_penny_stocks: Optional[bool] = None
+    timeframes: Optional[List[str]] = None
+    indicators: Optional[List[str]] = None
+    confirmation_required: Optional[bool] = None
+    volume_threshold: Optional[float] = None
+    divergence_check: Optional[bool] = None
+    check_frequency: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class ChatMessageMetadata(BaseModel):
+    """Chat message metadata with known fields"""
+
+    symbol: Optional[str] = None
+    task_type: Optional[str] = None
+    analysis_type: Optional[str] = None
+    message_type: Optional[str] = None
+    steps_completed: Optional[int] = None
+    task: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class MemoryFilterCriteria(BaseModel):
+    """Memory filter criteria with known fields"""
+
+    rule_type: Optional[str] = None
+    active: Optional[bool] = None
+    session_id: Optional[str] = None
+    user_id: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class CreateTradingRule(BaseModel):
+    """Create a trading rule for agent memory (SGR style)"""
+
+    tool: Literal["create_trading_rule"]
+    rule_description: str = Field(
+        description="Human-readable description of the trading rule"
+    )
+    rule_type: str = Field(
+        default="general",
+        description="Type: risk_management, trading_preference, analysis_guideline",
+    )
+    parameters: TradingRuleParameters = Field(
+        default_factory=TradingRuleParameters, description="Rule parameters and values"
+    )
+    priority: int = Field(
+        default=1, ge=1, le=10, description="Rule priority (1-10, 10 is highest)"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class GetTradingMemory(BaseModel):
+    """Retrieve trading memory and rules"""
+
+    tool: Literal["get_trading_memory"]
+    memory_type: str = Field(
+        default="all", description="Type: all, rules, market_data, forecasts, trades"
+    )
+    filter_by: Optional[MemoryFilterCriteria] = Field(
+        default=None, description="Filter criteria"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class UpdateTradingRule(BaseModel):
+    """Update existing trading rule"""
+
+    tool: Literal["update_trading_rule"]
+    rule_id: str = Field(description="ID of rule to update")
+    new_description: Optional[str] = Field(
+        default=None, description="New rule description"
+    )
+    new_parameters: Optional[TradingRuleParameters] = Field(
+        default=None, description="New rule parameters"
+    )
+    new_priority: Optional[int] = Field(
+        default=None, ge=1, le=10, description="New priority level"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class DeleteTradingRule(BaseModel):
+    """Delete trading rule from memory"""
+
+    tool: Literal["delete_trading_rule"]
+    rule_id: str = Field(description="ID of rule to delete")
+    reason: str = Field(description="Reason for deletion")
+
+    class Config:
+        extra = "forbid"
+
+
+class CreateChatSession(BaseModel):
+    """Create new chat session in memory"""
+
+    tool: Literal["create_chat_session"]
+    session_name: str = Field(description="Human-readable name for the chat session")
+    user_id: str = Field(default="default", description="User identifier")
+    session_type: str = Field(
+        default="trading_analysis", description="Type of chat session"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class SaveChatMessage(BaseModel):
+    """Save chat message to session memory"""
+
+    tool: Literal["save_chat_message"]
+    session_id: str = Field(description="Chat session ID")
+    message_type: str = Field(description="Type: user, assistant, system, tool")
+    content: str = Field(description="Message content")
+    metadata: Optional[ChatMessageMetadata] = Field(
+        default=None, description="Additional message metadata"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
+class GetChatHistory(BaseModel):
+    """Retrieve chat history from memory"""
+
+    tool: Literal["get_chat_history"]
+    session_id: Optional[str] = Field(
+        default=None, description="Specific session ID or None for all sessions"
+    )
+    limit: int = Field(default=50, description="Maximum number of messages to retrieve")
+    message_types: List[str] = Field(
+        default=["user", "assistant"], description="Types of messages to include"
+    )
+
+    class Config:
+        extra = "forbid"
+
+
 # ============ SGR Response Model ============
 
 
@@ -395,10 +559,12 @@ class SGRTradingResponse(BaseModel):
     """Schema-Guided Reasoning response for financial trading"""
 
     current_state: str = Field(
-        description="Current analysis state (what the agent is thinking about)"
+        max_length=200,
+        description="Current analysis state (what the agent is thinking about)",
     )
     plan_remaining_steps_brief: List[str] = Field(
-        description="Brief list of remaining analysis steps to complete the task"
+        max_items=5,
+        description="Brief list of remaining analysis steps to complete the task (max 5 items)",
     )
     function: Union[
         MarketDataRequest,
@@ -410,6 +576,14 @@ class SGRTradingResponse(BaseModel):
         WebAnalysisRequest,
         ComprehensiveWebResearch,
         ReportTaskCompletion,
+        # Memory tools temporarily disabled for debugging
+        CreateTradingRule,
+        GetTradingMemory,
+        UpdateTradingRule,
+        DeleteTradingRule,
+        CreateChatSession,
+        SaveChatMessage,
+        GetChatHistory,
         # Deep Research tools would be imported separately when needed
     ] = Field(description="Next financial analysis tool to execute")
     task_completed: bool = Field(
