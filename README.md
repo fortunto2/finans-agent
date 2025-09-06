@@ -122,6 +122,22 @@ finans-agent/
 └── .env.example             # 🔑 Пример конфигурации
 ```
 
+## 🧪 Alpha Research Module
+
+The project includes an Alpha Factory for declarative factor research. Define factors with operators such as `delta`, `ts_rank`, and `decay_linear`, compute them on OHLCV data, and receive cross-sectional IC(1d) reports.
+
+```python
+specs = [
+    AlphaSpec(
+        name="mom_20_z",
+        input="close",
+        ops=[{"name": "delta", "k": 1}, {"name": "zscore", "window": 20}],
+    )
+]
+cmd = AlphaGenerationRequest(tool="generate_alphas", symbols=["AAPL", "MSFT"], specs=specs)
+res = dispatch(cmd)
+```
+
 ## 🧠 Как работает SGR
 
 ### SGR Workflow:
