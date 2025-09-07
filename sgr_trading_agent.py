@@ -303,7 +303,9 @@ class FinancialTradingDB:
     ) -> Dict[str, Any]:
         """Save chat message to session (SGR style)"""
         if session_id not in self.data["sessions"]:
-            raise ValueError(f"Session {session_id} not found")
+            # Auto-create session if it doesn't exist
+            logger.warning(f"Session {session_id} not found, creating automatically")
+            self.create_session(session_id, "auto_created", session_type="auto")
 
         message = {
             "message_id": f"msg_{len(self.data['chat_messages'][session_id]) + 1}",

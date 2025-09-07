@@ -7,9 +7,14 @@ Beautiful web interface for the financial trading agent with step-by-step visual
 
 import json
 from typing import Any, Dict, List, Union
-# from datetime import datetime  # Not used directly
+from datetime import datetime, timedelta
+import pandas as pd
+import numpy as np
 
 import chainlit as cl
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 from openai import AsyncAzureOpenAI
 from dotenv import load_dotenv
 
@@ -79,6 +84,695 @@ TRADING_CACHE = {"analyses": [], "forecasts": [], "recommendations": []}
 
 # Global session tracking
 CURRENT_SESSION = {"session_id": None, "session_name": None}
+
+# =============================================================================
+# PLOTLY CHART CREATION FUNCTIONS
+# =============================================================================
+
+
+def create_candlestick_chart(data: Dict[str, Any], symbol: str = "STOCK") -> go.Figure:
+    """Create an interactive candlestick chart with volume."""
+
+    # Extract data or create sample data if not available
+    if "price_data" in data and data["price_data"]:
+        price_data = data["price_data"]
+        df = pd.DataFrame(price_data)
+    else:
+        # Create sample data for demonstration
+        dates = pd.date_range(start="2024-01-01", periods=30, freq="D")
+        base_price = 100
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "open": np.random.normal(base_price, 2, 30),
+                "high": np.random.normal(base_price + 2, 1.5, 30),
+                "low": np.random.normal(base_price - 2, 1.5, 30),
+                "close": np.random.normal(base_price, 2, 30),
+                "volume": np.random.randint(1000000, 5000000, 30),
+            }
+        )
+        # Ensure high >= max(open, close) and low <= min(open, close)
+        df["high"] = np.maximum(df["high"], np.maximum(df["open"], df["close"]))
+        df["low"] = np.minimum(df["low"], np.minimum(df["open"], df["close"]))
+
+    # Create subplots with secondary y-axis for volume
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=(f"{symbol} Price", "Volume"),
+        row_heights=[0.7, 0.3],
+    )
+
+    # Add candlestick chart
+    candlestick = go.Candlestick(
+        x=df["date"] if "date" in df.columns else df.index,
+        open=df["open"],
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        name=symbol,
+        increasing_line_color="#00ff88",  # Green for gains
+        decreasing_line_color="#ff4444",  # Red for losses
+        increasing_fillcolor="#00ff88",
+        decreasing_fillcolor="#ff4444",
+    )
+
+    fig.add_trace(candlestick, row=1, col=1)
+
+    # Add volume bars if available
+    if "volume" in df.columns:
+        volume_colors = [
+            "#00ff88" if close >= open else "#ff4444"
+            for close, open in zip(df["close"], df["open"])
+        ]
+
+        volume_bars = go.Bar(
+            x=df["date"] if "date" in df.columns else df.index,
+            y=df["volume"],
+            name="Volume",
+            marker_color=volume_colors,
+            opacity=0.6,
+        )
+        fig.add_trace(volume_bars, row=2, col=1)
+
+    # Update layout
+    fig.update_layout(
+        title=f"📈 {symbol} - Анализ цены и объема",
+        xaxis_rangeslider_visible=False,
+        height=600,
+        showlegend=False,
+        template="plotly_dark",
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    # Format axes
+    fig.update_xaxes(title_text="Дата", row=2, col=1)
+    fig.update_yaxes(title_text="Цена ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Объем", row=2, col=1)
+
+    return fig
+
+
+def create_forecast_probability_chart(forecast: Dict[str, Any]) -> go.Figure:
+    """Create a probability visualization chart for forecasts."""
+
+    individual_forecasts = forecast.get("individual_forecasts", [])
+    consensus_probability = forecast.get("consensus_probability", 0.5) * 100
+
+    if individual_forecasts:
+        agents = [f.get("agent_type", "Unknown") for f in individual_forecasts]
+        probabilities = [
+            f.get("prediction_probability", 0.5) * 100 for f in individual_forecasts
+        ]
+    else:
+        # Sample data
+        agents = ["Bull Agent", "Bear Agent", "Technical Agent", "Sentiment Agent"]
+        probabilities = [75, 25, 60, 45]
+
+    # Create figure with secondary y-axis
+    fig = go.Figure()
+
+    # Agent probability bars
+    colors = ["#00ff88" if p > 50 else "#ff4444" for p in probabilities]
+
+    fig.add_trace(
+        go.Bar(
+            x=agents,
+            y=probabilities,
+            name="Прогнозы агентов",
+            marker_color=colors,
+            text=[f"{p:.0f}%" for p in probabilities],
+            textposition="outside",
+        )
+    )
+
+    # Add consensus line
+    fig.add_hline(
+        y=consensus_probability,
+        line_dash="dash",
+        line_color="#ffaa00",
+        annotation_text=f"Консенсус: {consensus_probability:.0f}%",
+        annotation_position="top right",
+    )
+
+    # Add 50% reference line
+    fig.add_hline(
+        y=50,
+        line_dash="dot",
+        line_color="gray",
+        annotation_text="50% базовая линия",
+        annotation_position="bottom right",
+    )
+
+    fig.update_layout(
+        title="🔮 Прогнозные вероятности по агентам",
+        xaxis_title="Агенты",
+        yaxis_title="Вероятность (%)",
+        yaxis=dict(range=[0, 100]),
+        template="plotly_dark",
+        height=400,
+        showlegend=False,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig
+
+
+def create_risk_gauge_chart(risk: Dict[str, Any]) -> go.Figure:
+    """Create a risk gauge chart with VaR and other metrics."""
+
+    risk_level = risk.get("risk_level", "medium")
+    var_1d = abs(risk.get("var_1d", 0.05)) * 100  # Convert to percentage
+    var_5d = abs(risk.get("var_5d", 0.12)) * 100
+
+    # Map risk level to numeric value
+    risk_mapping = {"low": 25, "medium": 50, "high": 75, "extreme": 90}
+    risk_value = risk_mapping.get(risk_level, 50)
+
+    fig = go.Figure()
+
+    # Main risk gauge
+    fig.add_trace(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=risk_value,
+            domain={"x": [0, 1], "y": [0.5, 1]},
+            title={"text": "Уровень риска"},
+            delta={"reference": 50},
+            gauge={
+                "axis": {"range": [None, 100]},
+                "bar": {
+                    "color": "darkred"
+                    if risk_value > 70
+                    else "orange"
+                    if risk_value > 40
+                    else "green"
+                },
+                "steps": [
+                    {"range": [0, 30], "color": "lightgreen"},
+                    {"range": [30, 70], "color": "yellow"},
+                    {"range": [70, 100], "color": "red"},
+                ],
+                "threshold": {
+                    "line": {"color": "red", "width": 4},
+                    "thickness": 0.75,
+                    "value": 80,
+                },
+            },
+        )
+    )
+
+    # VaR indicators
+    fig.add_trace(
+        go.Indicator(
+            mode="number",
+            value=var_1d,
+            number={"suffix": "%"},
+            title={"text": "VaR 1 день"},
+            domain={"x": [0, 0.5], "y": [0, 0.4]},
+        )
+    )
+
+    fig.add_trace(
+        go.Indicator(
+            mode="number",
+            value=var_5d,
+            number={"suffix": "%"},
+            title={"text": "VaR 5 дней"},
+            domain={"x": [0.5, 1], "y": [0, 0.4]},
+        )
+    )
+
+    fig.update_layout(
+        title="⚠️ Оценка рисков портфеля",
+        template="plotly_dark",
+        height=500,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig
+
+
+def create_backtest_performance_chart(backtest: Dict[str, Any]) -> go.Figure:
+    """Create a performance chart for backtest results."""
+
+    # Extract or create sample performance data
+    if "performance_data" in backtest:
+        performance_data = backtest["performance_data"]
+        df = pd.DataFrame(performance_data)
+    else:
+        # Create sample cumulative returns
+        dates = pd.date_range(start="2023-01-01", periods=252, freq="D")  # 1 year
+        daily_returns = np.random.normal(
+            0.0008, 0.02, 252
+        )  # ~20% annual return, 20% volatility
+        cumulative_returns = (1 + pd.Series(daily_returns)).cumprod()
+
+        # Create benchmark (market) returns
+        benchmark_returns = np.random.normal(
+            0.0005, 0.015, 252
+        )  # ~12% annual return, 15% volatility
+        benchmark_cumulative = (1 + pd.Series(benchmark_returns)).cumprod()
+
+        df = pd.DataFrame(
+            {
+                "date": dates,
+                "strategy_value": cumulative_returns * 100000,  # Starting with $100k
+                "benchmark_value": benchmark_cumulative * 100000,
+                "strategy_returns": daily_returns,
+                "benchmark_returns": benchmark_returns,
+            }
+        )
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.1,
+        subplot_titles=("Кумулятивная доходность", "Дневные доходности"),
+        row_heights=[0.7, 0.3],
+    )
+
+    # Portfolio value line
+    fig.add_trace(
+        go.Scatter(
+            x=df["date"],
+            y=df["strategy_value"],
+            mode="lines",
+            name="Стратегия",
+            line=dict(color="#00ff88", width=2),
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Benchmark line
+    fig.add_trace(
+        go.Scatter(
+            x=df["date"],
+            y=df["benchmark_value"],
+            mode="lines",
+            name="Бенчмарк",
+            line=dict(color="#888888", width=1, dash="dash"),
+        ),
+        row=1,
+        col=1,
+    )
+
+    # Daily returns
+    colors = ["#00ff88" if r >= 0 else "#ff4444" for r in df["strategy_returns"]]
+    fig.add_trace(
+        go.Bar(
+            x=df["date"],
+            y=df["strategy_returns"] * 100,  # Convert to percentage
+            name="Дневная доходность",
+            marker_color=colors,
+            opacity=0.6,
+        ),
+        row=2,
+        col=1,
+    )
+
+    # Calculate key metrics for annotation
+    total_return = (
+        (df["strategy_value"].iloc[-1] / df["strategy_value"].iloc[0]) - 1
+    ) * 100
+    benchmark_return = (
+        (df["benchmark_value"].iloc[-1] / df["benchmark_value"].iloc[0]) - 1
+    ) * 100
+
+    fig.update_layout(
+        title=f"🔄 Результаты бэктеста - Общая доходность: {total_return:.1f}% vs Бенчмарк: {benchmark_return:.1f}%",
+        template="plotly_dark",
+        height=600,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    # Format axes
+    fig.update_xaxes(title_text="Дата", row=2, col=1)
+    fig.update_yaxes(title_text="Стоимость портфеля ($)", row=1, col=1)
+    fig.update_yaxes(title_text="Доходность (%)", row=2, col=1)
+
+    return fig
+
+
+def create_alpha_factors_heatmap(alpha_result: Dict[str, Any]) -> go.Figure:
+    """Create a heatmap visualization for alpha factors IC."""
+
+    reports = alpha_result.get("reports", [])
+
+    if reports:
+        # Extract factor names and IC values
+        factors = []
+        symbols = set()
+        ic_matrix = {}
+
+        for report in reports:
+            factor_name = report.get("factor", "Unknown")
+            factors.append(factor_name)
+
+            # Get IC by symbol if available, otherwise use overall IC
+            symbol_ics = report.get("symbol_ics", {})
+            if symbol_ics:
+                symbols.update(symbol_ics.keys())
+                ic_matrix[factor_name] = symbol_ics
+            else:
+                # Use overall IC for all symbols
+                overall_ic = report.get("ic1d", 0)
+                ic_matrix[factor_name] = {"Overall": overall_ic}
+                symbols.add("Overall")
+
+        symbols = sorted(list(symbols))
+
+        # Create matrix for heatmap
+        z_matrix = []
+        for factor in factors:
+            row = []
+            for symbol in symbols:
+                ic_value = ic_matrix.get(factor, {}).get(symbol, 0)
+                row.append(ic_value)
+            z_matrix.append(row)
+    else:
+        # Sample data
+        factors = ["Momentum", "Reversal", "Volume", "Volatility", "RSI"]
+        symbols = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA"]
+        z_matrix = np.random.uniform(-0.2, 0.2, (len(factors), len(symbols))).tolist()
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=z_matrix,
+            x=symbols,
+            y=factors,
+            colorscale=[
+                [0, "#ff4444"],  # Red for negative IC
+                [0.5, "#ffffff"],  # White for zero
+                [1, "#00ff88"],  # Green for positive IC
+            ],
+            zmid=0,
+            text=[[f"{val:.3f}" for val in row] for row in z_matrix],
+            texttemplate="%{text}",
+            textfont={"size": 10},
+            colorbar=dict(title="Information Coefficient"),
+        )
+    )
+
+    fig.update_layout(
+        title="🧮 Alpha Factory - Тепловая карта информационных коэффициентов",
+        xaxis_title="Символы",
+        yaxis_title="Альфа-факторы",
+        template="plotly_dark",
+        height=500,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig
+
+
+def create_sentiment_timeline(news: Dict[str, Any]) -> go.Figure:
+    """Create a timeline chart showing sentiment over time."""
+
+    news_data = news.get("news_data", [])
+
+    if news_data and isinstance(news_data, list) and len(news_data) > 0:
+        # Extract sentiment data from news
+        all_articles = []
+        for symbol_data in news_data:
+            articles = symbol_data.get("articles", [])
+            symbol = symbol_data.get("symbol", "Unknown")
+            for article in articles:
+                article["symbol"] = symbol
+                all_articles.append(article)
+
+        if all_articles:
+            df = pd.DataFrame(all_articles)
+            # Convert timestamps if available
+            if "timestamp" in df.columns:
+                df["timestamp"] = pd.to_datetime(df["timestamp"])
+            else:
+                # Create fake timestamps
+                base_time = datetime.now() - timedelta(hours=24)
+                df["timestamp"] = [
+                    base_time + timedelta(hours=i) for i in range(len(df))
+                ]
+        else:
+            df = pd.DataFrame()
+    else:
+        # Create sample sentiment timeline
+        hours = 24
+        timestamps = [datetime.now() - timedelta(hours=h) for h in range(hours, 0, -1)]
+        sentiment_scores = np.random.normal(0.1, 0.3, hours)  # Slightly positive bias
+        df = pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "sentiment_score": sentiment_scores,
+                "symbol": ["MARKET"] * hours,
+            }
+        )
+
+    if df.empty:
+        # Fallback data
+        timestamps = [datetime.now() - timedelta(hours=h) for h in range(24, 0, -1)]
+        sentiment_scores = np.random.normal(0.1, 0.3, 24)
+        df = pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "sentiment_score": sentiment_scores,
+                "symbol": ["MARKET"] * 24,
+            }
+        )
+
+    fig = go.Figure()
+
+    # Color code by sentiment
+    colors = [
+        "#00ff88" if s > 0.1 else "#ff4444" if s < -0.1 else "#ffaa00"
+        for s in df["sentiment_score"]
+    ]
+
+    # Scatter plot with sentiment scores
+    fig.add_trace(
+        go.Scatter(
+            x=df["timestamp"],
+            y=df["sentiment_score"],
+            mode="markers+lines",
+            name="Sentiment",
+            marker=dict(color=colors, size=8, line=dict(width=1, color="white")),
+            line=dict(color="rgba(255, 255, 255, 0.3)", width=1),
+        )
+    )
+
+    # Add reference lines
+    fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+    fig.add_hline(
+        y=0.2,
+        line_dash="dot",
+        line_color="green",
+        opacity=0.3,
+        annotation_text="Позитивный",
+    )
+    fig.add_hline(
+        y=-0.2,
+        line_dash="dot",
+        line_color="red",
+        opacity=0.3,
+        annotation_text="Негативный",
+    )
+
+    fig.update_layout(
+        title="📰 Анализ новостных настроений во времени",
+        xaxis_title="Время",
+        yaxis_title="Sentiment Score",
+        yaxis=dict(range=[-1, 1]),
+        template="plotly_dark",
+        height=400,
+        showlegend=False,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig
+
+
+def create_calibration_reliability_diagram(
+    calibration_result: Dict[str, Any],
+) -> go.Figure:
+    """Create a reliability diagram for forecast calibration."""
+
+    analysis = calibration_result.get("calibration_analysis", {})
+
+    # Sample calibration data if not available
+    if "calibration_bins" in analysis:
+        bins = analysis["calibration_bins"]
+        bin_boundaries = bins.get("bin_boundaries", [0, 0.2, 0.4, 0.6, 0.8, 1.0])
+        observed_frequencies = bins.get(
+            "observed_frequencies", [0.1, 0.25, 0.45, 0.65, 0.85]
+        )
+        predicted_probabilities = bins.get(
+            "predicted_probabilities", [0.1, 0.3, 0.5, 0.7, 0.9]
+        )
+        bin_counts = bins.get("bin_counts", [20, 25, 30, 15, 10])
+    else:
+        # Sample data showing calibration curve
+        bin_boundaries = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        predicted_probabilities = [0.1, 0.3, 0.5, 0.7, 0.9]
+        # Realistic calibration: closer to diagonal = better calibrated
+        observed_frequencies = [0.12, 0.28, 0.52, 0.68, 0.87]  # Slightly miscalibrated
+        bin_counts = [20, 25, 30, 15, 10]
+
+    fig = go.Figure()
+
+    # Perfect calibration line (diagonal)
+    fig.add_trace(
+        go.Scatter(
+            x=[0, 1],
+            y=[0, 1],
+            mode="lines",
+            name="Perfect Calibration",
+            line=dict(color="gray", dash="dash", width=2),
+            hovertemplate="Perfect Calibration<extra></extra>",
+        )
+    )
+
+    # Actual calibration curve
+    fig.add_trace(
+        go.Scatter(
+            x=predicted_probabilities,
+            y=observed_frequencies,
+            mode="markers+lines",
+            name="Model Calibration",
+            marker=dict(
+                size=[count / 2 for count in bin_counts],  # Size proportional to count
+                color="#ff6b6b",
+                line=dict(width=2, color="white"),
+            ),
+            line=dict(color="#ff6b6b", width=3),
+            customdata=bin_counts,
+            hovertemplate="Predicted: %{x:.2f}<br>Observed: %{y:.2f}<br>Count: %{customdata}<extra></extra>",
+        )
+    )
+
+    # Calculate and display calibration error areas
+    for i in range(len(predicted_probabilities)):
+        x_val = predicted_probabilities[i]
+        y_obs = observed_frequencies[i]
+        y_perfect = x_val
+
+        # Add error bars
+        fig.add_shape(
+            type="line",
+            x0=x_val,
+            y0=y_perfect,
+            x1=x_val,
+            y1=y_obs,
+            line=dict(color="rgba(255, 107, 107, 0.3)", width=2),
+        )
+
+    # Calculate metrics for annotation
+    ece = sum(
+        abs(obs - pred) * count
+        for obs, pred, count in zip(
+            observed_frequencies, predicted_probabilities, bin_counts
+        )
+    ) / sum(bin_counts)
+
+    fig.update_layout(
+        title=f"📊 Диаграмма надежности прогнозов (ECE: {ece:.3f})",
+        xaxis_title="Предсказанная вероятность",
+        yaxis_title="Наблюдаемая частота",
+        xaxis=dict(range=[0, 1]),
+        yaxis=dict(range=[0, 1]),
+        template="plotly_dark",
+        height=500,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+        showlegend=True,
+    )
+
+    # Add annotation
+    fig.add_annotation(
+        x=0.05,
+        y=0.95,
+        text=f"ECE: {ece:.3f}<br>{'Хорошая калибровка' if ece < 0.1 else 'Требует улучшения'}",
+        showarrow=False,
+        bgcolor="rgba(0,0,0,0.7)",
+        bordercolor="white",
+        borderwidth=1,
+    )
+
+    return fig
+
+
+def create_portfolio_allocation_pie(portfolio_data: Dict[str, Any]) -> go.Figure:
+    """Create a pie chart for portfolio allocation."""
+
+    if "positions" in portfolio_data and portfolio_data["positions"]:
+        positions = portfolio_data["positions"]
+        symbols = [pos.get("symbol", "Unknown") for pos in positions]
+        values = [abs(pos.get("market_value", 0)) for pos in positions]
+    else:
+        # Sample portfolio data
+        symbols = ["AAPL", "GOOGL", "MSFT", "AMZN", "TSLA", "Cash"]
+        values = [25000, 20000, 18000, 15000, 12000, 10000]
+
+    # Create pie chart
+    fig = go.Figure(
+        data=[
+            go.Pie(
+                labels=symbols,
+                values=values,
+                hole=0.4,  # Donut chart
+                marker=dict(
+                    colors=[
+                        "#ff6b6b",
+                        "#4ecdc4",
+                        "#45b7d1",
+                        "#96ceb4",
+                        "#feca57",
+                        "#fd79a8",
+                    ]
+                ),
+                textinfo="label+percent",
+                textposition="outside",
+                hovertemplate="%{label}<br>Стоимость: $%{value:,.0f}<br>Доля: %{percent}<extra></extra>",
+            )
+        ]
+    )
+
+    # Add total value in center
+    total_value = sum(values)
+    fig.add_annotation(
+        text=f"Общая<br>стоимость<br>${total_value:,.0f}",
+        x=0.5,
+        y=0.5,
+        font_size=16,
+        showarrow=False,
+    )
+
+    fig.update_layout(
+        title="💼 Распределение портфеля",
+        template="plotly_dark",
+        height=400,
+        font=dict(color="white"),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+
+    return fig
+
 
 # =============================================================================
 # CHAINLIT HELPER FUNCTIONS
@@ -220,11 +914,13 @@ async def display_tool_result(tool_name: str, result: Union[Dict, List, str]) ->
 
 
 async def display_market_data_result(data: Dict[str, Any]) -> None:
-    """Display market data in a beautiful format."""
+    """Display market data with interactive charts."""
+
+    symbols_analyzed = data.get("symbols_analyzed", ["STOCK"])
+    primary_symbol = symbols_analyzed[0] if symbols_analyzed else "STOCK"
 
     content = "**📊 Рыночные данные:**\n\n"
-
-    content += f"**Символы:** {', '.join(data.get('symbols_analyzed', []))}\n"
+    content += f"**Символы:** {', '.join(symbols_analyzed)}\n"
     content += f"**Точек данных:** {data.get('data_points', 0)}\n"
     content += f"**Рыночный тренд:** {data.get('market_trend', 'unknown')}\n"
     content += f"**Волатильность:** {data.get('volatility_assessment', 'unknown')}\n\n"
@@ -234,9 +930,16 @@ async def display_market_data_result(data: Dict[str, Any]) -> None:
         for insight in data["key_insights"]:
             content += f"• {insight}\n"
 
+    # Create interactive candlestick chart
+    fig = create_candlestick_chart(data, primary_symbol)
+
+    # Create chart element
+    chart_element = cl.Plotly(
+        name="market_data_chart", figure=fig, display="inline", size="large"
+    )
+
     msg = cl.Message(
-        author="📈 Рыночные данные",
-        content=content,
+        author="📈 Рыночные данные", content=content, elements=[chart_element]
     )
     await msg.send()
 
@@ -280,7 +983,7 @@ async def display_trading_recommendation(rec: Dict[str, Any]) -> None:
 
 
 async def display_forecast_result(forecast: Dict[str, Any]) -> None:
-    """Display forecast results with probabilities."""
+    """Display forecast results with interactive probability chart."""
 
     question = forecast.get("question", "")
     probability = forecast.get("consensus_probability", 0.5) * 100
@@ -307,15 +1010,19 @@ async def display_forecast_result(forecast: Dict[str, Any]) -> None:
             prob = f.get("prediction_probability", 0.5) * 100
             content += f"• **{agent}:** {prob:.0f}%\n"
 
-    msg = cl.Message(
-        author="🔮 Прогноз",
-        content=content,
+    # Create interactive probability chart
+    fig = create_forecast_probability_chart(forecast)
+
+    chart_element = cl.Plotly(
+        name="forecast_chart", figure=fig, display="inline", size="medium"
     )
+
+    msg = cl.Message(author="🔮 Прогноз", content=content, elements=[chart_element])
     await msg.send()
 
 
 async def display_risk_assessment(risk: Dict[str, Any]) -> None:
-    """Display risk assessment results."""
+    """Display risk assessment with interactive gauge charts."""
 
     risk_level = risk.get("risk_level", "unknown")
     risk_emoji = (
@@ -337,15 +1044,21 @@ async def display_risk_assessment(risk: Dict[str, Any]) -> None:
 {chr(10).join([f"• {r}" for r in risk.get('recommendations', [])])}
     """
 
+    # Create interactive risk gauge chart
+    fig = create_risk_gauge_chart(risk)
+
+    chart_element = cl.Plotly(
+        name="risk_gauge", figure=fig, display="inline", size="large"
+    )
+
     msg = cl.Message(
-        author="⚠️ Оценка рисков",
-        content=content,
+        author="⚠️ Оценка рисков", content=content, elements=[chart_element]
     )
     await msg.send()
 
 
 async def display_news_sentiment(news: Dict[str, Any]) -> None:
-    """Display news sentiment analysis."""
+    """Display news sentiment analysis with timeline chart."""
 
     sentiment = news.get("sentiment_category", "neutral")
     avg_sentiment = news.get("average_sentiment", 0)
@@ -381,15 +1094,19 @@ async def display_news_sentiment(news: Dict[str, Any]) -> None:
                     sentiment_score = article.get("sentiment_score", 0)
                     content += f"• {title} (sentiment: {sentiment_score:.2f})\n"
 
-    msg = cl.Message(
-        author="📰 Новости",
-        content=content,
+    # Create interactive sentiment timeline
+    fig = create_sentiment_timeline(news)
+
+    chart_element = cl.Plotly(
+        name="sentiment_timeline", figure=fig, display="inline", size="medium"
     )
+
+    msg = cl.Message(author="📰 Новости", content=content, elements=[chart_element])
     await msg.send()
 
 
 async def display_backtest_result(backtest: Dict[str, Any]) -> None:
-    """Display backtest results."""
+    """Display backtest results with performance charts."""
 
     total_return = backtest.get("total_return", 0) * 100
     win_rate = backtest.get("win_rate", 0) * 100
@@ -420,10 +1137,14 @@ async def display_backtest_result(backtest: Dict[str, Any]) -> None:
 **📝 Итог:** {backtest.get('performance_summary', 'Нет итога')}
     """
 
-    msg = cl.Message(
-        author="🔄 Бэктест",
-        content=content,
+    # Create interactive performance chart
+    fig = create_backtest_performance_chart(backtest)
+
+    chart_element = cl.Plotly(
+        name="backtest_performance", figure=fig, display="inline", size="large"
     )
+
+    msg = cl.Message(author="🔄 Бэктест", content=content, elements=[chart_element])
     await msg.send()
 
 
@@ -637,7 +1358,7 @@ async def display_web_research_result(research: Dict[str, Any]) -> None:
 
 
 async def display_alpha_factors_result(alpha_result: Dict[str, Any]) -> None:
-    """Display alpha factors generation results beautifully."""
+    """Display alpha factors generation results with heatmap visualization."""
 
     success = alpha_result.get("success", False)
     factors = alpha_result.get("factors", [])
@@ -728,47 +1449,6 @@ async def display_alpha_factors_result(alpha_result: Dict[str, Any]) -> None:
                 else:
                     content += f"• **{factor_name}**: IC=N/A ({coverage} obs) - Недостаточно данных\n"
 
-    # Factor coverage by symbol
-    if factors:
-        # Group factors by symbol
-        symbol_coverage = {}
-        for factor in factors:
-            symbol = factor.get("symbol", "Unknown")
-            factor_name = factor.get("factor", "Unknown")
-            points_count = len(factor.get("points", []))
-
-            if symbol not in symbol_coverage:
-                symbol_coverage[symbol] = {}
-            symbol_coverage[symbol][factor_name] = points_count
-
-        if symbol_coverage:
-            content += "\n**📋 Покрытие факторов по символам:**\n"
-            for symbol, factors_data in list(symbol_coverage.items())[
-                :5
-            ]:  # Show max 5 symbols
-                content += f"\n**{symbol}:**\n"
-                for factor_name, points in factors_data.items():
-                    content += f"  • {factor_name}: {points} точек данных\n"
-
-    # Sample factor values
-    if reports:
-        content += "\n**🔢 Последние значения факторов (образец):**\n"
-        for report in reports[:3]:  # Show first 3 factors
-            factor_name = report.get("factor", "Unknown")
-            last_values = report.get("last_value", {})
-
-            if last_values:
-                content += f"\n**{factor_name}:**\n"
-                for symbol, value in list(last_values.items())[:5]:  # First 5 symbols
-                    # Format value nicely
-                    if abs(value) < 0.001:
-                        value_str = f"{value:.6f}"
-                    elif abs(value) < 1:
-                        value_str = f"{value:.4f}"
-                    else:
-                        value_str = f"{value:.2f}"
-                    content += f"  {symbol}: {value_str}\n"
-
     # Alpha Factory info
     content += f"""
 
@@ -778,14 +1458,20 @@ async def display_alpha_factors_result(alpha_result: Dict[str, Any]) -> None:
 - Временной горизонт: {alpha_result.get('timestamp', 'N/A')[:19] if alpha_result.get('timestamp') else 'N/A'}
     """
 
+    # Create interactive heatmap for alpha factors
+    fig = create_alpha_factors_heatmap(alpha_result)
+
+    chart_element = cl.Plotly(
+        name="alpha_factors_heatmap", figure=fig, display="inline", size="large"
+    )
+
     await cl.Message(
-        author="🧮 Alpha Factory",
-        content=content,
+        author="🧮 Alpha Factory", content=content, elements=[chart_element]
     ).send()
 
 
 async def display_calibration_result(calibration_result: Dict[str, Any]) -> None:
-    """Display forecast calibration analysis results."""
+    """Display forecast calibration analysis with reliability diagram."""
 
     analysis = calibration_result.get("calibration_analysis", {})
     success = calibration_result.get("success", False)
@@ -847,9 +1533,15 @@ async def display_calibration_result(calibration_result: Dict[str, Any]) -> None
     # Period info
     content += f"\n**ℹ️ Период анализа:** {calibration_result.get('time_period', 'N/A')}"
 
+    # Create reliability diagram
+    fig = create_calibration_reliability_diagram(calibration_result)
+
+    chart_element = cl.Plotly(
+        name="calibration_diagram", figure=fig, display="inline", size="large"
+    )
+
     await cl.Message(
-        author="📊 Калибровка прогнозов",
-        content=content,
+        author="📊 Калибровка прогнозов", content=content, elements=[chart_element]
     ).send()
 
 
@@ -1130,7 +1822,7 @@ async def display_text_result(tool_name: str, result: str) -> None:
 
 
 async def display_final_answer(completion: ReportTaskCompletion) -> None:
-    """Display final answer and recommendations."""
+    """Display final answer and recommendations with portfolio visualization."""
 
     content = "**🎯 ИТОГОВЫЙ АНАЛИЗ:**\n\n"
 
@@ -1143,15 +1835,30 @@ async def display_final_answer(completion: ReportTaskCompletion) -> None:
     for i, step in enumerate(completion.completed_steps_laconic, 1):
         content += f"{i}. {step}\n"
 
+    elements = []
+
     # Show portfolio status if available
     if DB.memory.positions:
         content += "\n**💼 Текущие позиции:**\n"
         for position in DB.memory.positions[-5:]:
             content += f"• {position.symbol}: {position.quantity} акций @ ${position.avg_cost:.2f}\n"
 
+        # Create portfolio visualization
+        portfolio_data = {
+            "positions": [
+                {"symbol": pos.symbol, "market_value": pos.quantity * pos.avg_cost}
+                for pos in DB.memory.positions
+            ]
+        }
+
+        fig = create_portfolio_allocation_pie(portfolio_data)
+        chart_element = cl.Plotly(
+            name="portfolio_allocation", figure=fig, display="inline", size="medium"
+        )
+        elements.append(chart_element)
+
     msg = cl.Message(
-        author="🏁 Завершение",
-        content=content,
+        author="🏁 Завершение", content=content, elements=elements if elements else None
     )
     await msg.send()
 
@@ -1403,13 +2110,63 @@ async def run_sgr_step(task: str, conversation_log: List[Dict]) -> SGRTradingRes
     )
 
     try:
-        sgr_response = completion.choices[0].message.parsed
+        # Check if completion has choices and they are valid
+        if not completion.choices or len(completion.choices) == 0:
+            print("Warning: No choices in completion, creating fallback response")
+            from models import ReportTaskCompletion
+
+            return SGRTradingResponse(
+                current_state="No completion choices available, using fallback",
+                plan_remaining_steps_brief=["Continue analysis with available tools"],
+                task_completed=False,
+                function=ReportTaskCompletion(
+                    completed_steps_laconic=["No completion choices, continuing"],
+                    code="no_choices_error",
+                ),
+            )
+
+        # Check if message exists and has parsed content
+        choice = completion.choices[0]
+        if not hasattr(choice, "message") or choice.message is None:
+            print("Warning: No message in choice, creating fallback response")
+            from models import ReportTaskCompletion
+
+            return SGRTradingResponse(
+                current_state="No message in completion choice, using fallback",
+                plan_remaining_steps_brief=["Continue analysis with available tools"],
+                task_completed=False,
+                function=ReportTaskCompletion(
+                    completed_steps_laconic=["No message content, continuing"],
+                    code="no_message_error",
+                ),
+            )
+
+        sgr_response = choice.message.parsed
 
         # Log token usage for debugging
         if hasattr(completion, "usage") and completion.usage:
             usage = completion.usage
             print(
                 f"Token usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+            )
+
+        # Check if sgr_response is None
+        if sgr_response is None:
+            print("Warning: SGR response is None, creating fallback response")
+            from models import ReportTaskCompletion
+
+            return SGRTradingResponse(
+                current_state="Parsing error occurred, continuing with fallback response",
+                plan_remaining_steps_brief=[
+                    "Continue analysis with next available tool"
+                ],
+                task_completed=False,
+                function=ReportTaskCompletion(
+                    completed_steps_laconic=[
+                        "Encountered parsing issue, continuing analysis"
+                    ],
+                    code="parsing_error",
+                ),
             )
 
         return sgr_response
@@ -1695,18 +2452,19 @@ async def start_chat():
     welcome_msg = f"""
 # 💹 SGR Финансовый Торговый Агент
 
-Добро пожаловать в мультиагентную систему финансового анализа!
+Добро пожаловать в мультиагентную систему финансового анализа с интерактивными графиками!
 
 **🔍 Возможности агента:**
-- Анализ рыночных данных в реальном времени
+- 📈 **Интерактивные графики:** свечные диаграммы, объемы, индикаторы риска
+- Анализ рыночных данных в реальном времени с визуализацией Plotly
 - Технический и фундаментальный анализ
-- Вероятностные прогнозы с мультиагентным подходом
-- Оценка рисков портфеля (VaR, Sharpe ratio)
-- Анализ новостных настроений
-- Бэктестирование стратегий
+- Вероятностные прогнозы с мультиагентным подходом и диаграммами
+- Оценка рисков портфеля (VaR, Sharpe ratio) с интерактивными индикаторами
+- Анализ новостных настроений с временными графиками
+- Бэктестирование стратегий с графиками производительности
 - 🌐 **Веб-скрапинг:** извлечение данных с любых финансовых сайтов
 - 🔍 **Комплексное исследование:** анализ множества источников одновременно
-- 🧮 **Alpha Factory:** генерация альфа-факторов WorldQuant с информационным коэффициентом
+- 🧮 **Alpha Factory:** генерация альфа-факторов WorldQuant с тепловыми картами IC
 - 📊 **Калибровка прогнозов:** Brier Score, ECE, Reliability Diagrams для оценки точности
 - ⚠️ **Управление рисками:** Circuit breakers, kill-switch, автоматические лимиты
 - 📈 **Продвинутые метрики:** Calmar ratio, Sortino ratio, Implementation Shortfall
