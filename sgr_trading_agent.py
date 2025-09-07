@@ -53,6 +53,10 @@ from models import (
     AlphaSpec,
     AlphaSeries,
     AlphaReport,
+    # New calibration and risk control models
+    CalibrationAnalysisRequest,
+    RiskControlsRequest,
+    EnhancedMetricsRequest,
 )
 
 # Import market data tools
@@ -75,6 +79,14 @@ from api import OpointAPI
 # Import Alpha Factory engine
 from alpha_engine import compute_alphas
 
+# Import new calibration and risk control systems
+from calibration_engine import (
+    analyze_forecast_calibration,
+    register_forecast_for_calibration,
+)
+from risk_controls import manage_risk_controls, RISK_CONTROL_SYSTEM
+from enhanced_metrics import calculate_enhanced_metrics
+
 # Setup rich console for beautiful output
 console = Console()
 
@@ -95,6 +107,9 @@ __all__ = [
     "save_chat_message",
     "get_chat_history",
     "generate_alphas",
+    "analyze_calibration",
+    "manage_risk_controls_wrapper",
+    "calculate_enhanced_metrics_wrapper",
     "dispatch",
 ]
 
@@ -455,6 +470,29 @@ def dispatch(cmd) -> Union[str, Dict[str, Any], List[Dict[str, Any]]]:
 
     elif isinstance(cmd, AlphaGenerationRequest):
         return generate_alphas(cmd.symbols, cmd.specs, cmd.timeframe, cmd.period)
+
+    elif isinstance(cmd, CalibrationAnalysisRequest):
+        return analyze_calibration(
+            cmd.time_period, cmd.agent_types, cmd.include_reliability_diagram
+        )
+
+    elif isinstance(cmd, RiskControlsRequest):
+        return manage_risk_controls_wrapper(
+            cmd.action,
+            cmd.control_type,
+            reason=cmd.reason,
+            authorized_by=cmd.authorized_by,
+            breaker_id=cmd.breaker_id,
+            activate=cmd.activate,
+            threshold_value=cmd.threshold_value,
+            trigger_type=cmd.trigger_type,
+            name=cmd.name,
+        )
+
+    elif isinstance(cmd, EnhancedMetricsRequest):
+        return calculate_enhanced_metrics_wrapper(
+            cmd.metrics, cmd.time_period, cmd.benchmark
+        )
 
     elif isinstance(cmd, CreateTradingRule):
         # Convert TradingRuleParameters to dict for internal functions
@@ -1197,18 +1235,18 @@ def run_backtest(
 
 
 def generate_alphas(
-    symbols: List[str], 
-    specs: List[AlphaSpec], 
-    timeframe: str = "1d", 
-    period: str = "3mo"
+    symbols: List[str],
+    specs: List[AlphaSpec],
+    timeframe: str = "1d",
+    period: str = "3mo",
 ) -> Dict[str, Any]:
     """Generate alpha factors using WorldQuant Finding Alphas operators"""
     try:
         logger.info(f"Generating {len(specs)} alpha factors for {len(symbols)} symbols")
-        
+
         # Use alpha engine to compute factors
         result = compute_alphas(symbols, specs, timeframe, period)
-        
+
         if result.get("success"):
             # Store analysis in history
             analysis_record = {
@@ -1222,13 +1260,17 @@ def generate_alphas(
                 "period": period,
             }
             DB.analysis_history.append(analysis_record)
-            
-            logger.info(f"Alpha generation completed: {len(result.get('factors', []))} factor series")
+
+            logger.info(
+                f"Alpha generation completed: {len(result.get('factors', []))} factor series"
+            )
         else:
-            logger.warning(f"Alpha generation failed: {result.get('error', 'Unknown error')}")
-        
+            logger.warning(
+                f"Alpha generation failed: {result.get('error', 'Unknown error')}"
+            )
+
         return result
-        
+
     except Exception as e:
         logger.error(f"Error in alpha generation: {e}")
         return {
@@ -1236,6 +1278,58 @@ def generate_alphas(
             "error": str(e),
             "symbols_requested": symbols,
             "specs_requested": [spec.name for spec in specs],
+        }
+
+
+def analyze_calibration(
+    time_period: str = "30d",
+    agent_types: List[str] = None,
+    include_reliability_diagram: bool = True,
+) -> Dict[str, Any]:
+    """Analyze forecast calibration metrics"""
+    try:
+        logger.info(f"Analyzing forecast calibration for period: {time_period}")
+        return analyze_forecast_calibration(
+            time_period, agent_types, include_reliability_diagram
+        )
+    except Exception as e:
+        logger.error(f"Error in calibration analysis: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+        }
+
+
+def manage_risk_controls_wrapper(
+    action: str, control_type: str = None, **kwargs
+) -> Dict[str, Any]:
+    """Manage risk controls and circuit breakers"""
+    try:
+        logger.info(f"Managing risk controls: {action}")
+        return manage_risk_controls(action, control_type, **kwargs)
+    except Exception as e:
+        logger.error(f"Error managing risk controls: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
+        }
+
+
+def calculate_enhanced_metrics_wrapper(
+    metrics: List[str], time_period: str = "1y", benchmark: str = None
+) -> Dict[str, Any]:
+    """Calculate enhanced trading performance metrics"""
+    try:
+        logger.info(f"Calculating enhanced metrics: {metrics}")
+        return calculate_enhanced_metrics(metrics, time_period, benchmark)
+    except Exception as e:
+        logger.error(f"Error calculating enhanced metrics: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "timestamp": datetime.now().isoformat(),
         }
 
 
@@ -1514,32 +1608,42 @@ def run_financial_agent(task: str, max_steps: int = None) -> None:
                     reports = result.get("reports", [])
                     symbols_processed = result.get("symbols_processed", 0)
                     factors_computed = result.get("factors_computed", 0)
-                    
+
                     console.print(
                         f"[green]🧮 Alpha Factors Generated:[/green] {factors_computed} factors for {symbols_processed} symbols ({factors_count} series)"
                     )
-                    
+
                     # Show IC results for each factor
                     if reports:
-                        console.print("[cyan]Information Coefficient (IC) Results:[/cyan]")
+                        console.print(
+                            "[cyan]Information Coefficient (IC) Results:[/cyan]"
+                        )
                         for report in reports[:5]:  # Show top 5 factors
                             factor_name = report.get("factor", "Unknown")
                             ic = report.get("ic1d")
                             coverage = report.get("coverage", 0)
-                            
+
                             if ic is not None:
                                 ic_str = f"{ic:.4f}"
                                 if abs(ic) > 0.05:
                                     ic_color = "green" if ic > 0 else "red"
-                                    console.print(f"  • {factor_name}: IC={ic_str} ({coverage} obs) [{ic_color}]{'Strong' if abs(ic) > 0.1 else 'Moderate'}[/{ic_color}]")
+                                    console.print(
+                                        f"  • {factor_name}: IC={ic_str} ({coverage} obs) [{ic_color}]{'Strong' if abs(ic) > 0.1 else 'Moderate'}[/{ic_color}]"
+                                    )
                                 else:
-                                    console.print(f"  • {factor_name}: IC={ic_str} ({coverage} obs) [dim]Weak[/dim]")
+                                    console.print(
+                                        f"  • {factor_name}: IC={ic_str} ({coverage} obs) [dim]Weak[/dim]"
+                                    )
                             else:
-                                console.print(f"  • {factor_name}: IC=N/A ({coverage} obs)")
-                    
+                                console.print(
+                                    f"  • {factor_name}: IC=N/A ({coverage} obs)"
+                                )
+
                     # Show last values for debugging
                     if len(reports) > 0 and reports[0].get("last_value"):
-                        console.print(f"[dim]Last factor values available for {len(reports[0]['last_value'])} symbols[/dim]")
+                        console.print(
+                            f"[dim]Last factor values available for {len(reports[0]['last_value'])} symbols[/dim]"
+                        )
                 else:
                     # General result display
                     result_json = json.dumps(

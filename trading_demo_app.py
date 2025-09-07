@@ -28,6 +28,10 @@ from models import (
     AlphaGenerationRequest,
     AlphaSpec,
     AlphaOp,
+    # New enhanced system models
+    CalibrationAnalysisRequest,
+    RiskControlsRequest,
+    EnhancedMetricsRequest,
 )
 
 from sgr_trading_agent import (
@@ -38,6 +42,9 @@ from sgr_trading_agent import (
     analyze_news,
     run_backtest,
     generate_alphas,  # Alpha Factory function
+    analyze_calibration,  # Forecast calibration
+    manage_risk_controls_wrapper,  # Risk controls
+    calculate_enhanced_metrics_wrapper,  # Enhanced metrics
     create_chat_session,
     save_chat_message,
     get_chat_history,
@@ -195,6 +202,12 @@ async def display_tool_result(tool_name: str, result: Union[Dict, List, str]) ->
             await display_web_research_result(result)
         elif "factors" in result and "reports" in result:
             await display_alpha_factors_result(result)
+        elif "calibration_analysis" in result:
+            await display_calibration_result(result)
+        elif "risk_status" in result or "triggered_breakers" in result:
+            await display_risk_controls_result(result)
+        elif "calculated_metrics" in result and "requested_metrics" in result:
+            await display_enhanced_metrics_result(result)
         elif "error" in result:
             await display_error_result(result)
         elif "final_answer_displayed" in result:
@@ -771,6 +784,298 @@ async def display_alpha_factors_result(alpha_result: Dict[str, Any]) -> None:
     ).send()
 
 
+async def display_calibration_result(calibration_result: Dict[str, Any]) -> None:
+    """Display forecast calibration analysis results."""
+
+    analysis = calibration_result.get("calibration_analysis", {})
+    success = calibration_result.get("success", False)
+
+    if not success or "error" in analysis:
+        error_msg = analysis.get("error", "Unknown error")
+        content = f"""
+**❌ Ошибка анализа калибровки:**
+
+{error_msg}
+        """
+        await cl.Message(
+            author="📊 Калибровка прогнозов",
+            content=content,
+        ).send()
+        return
+
+    # Main calibration summary
+    forecast_counts = analysis.get("forecast_counts", {})
+    metrics = analysis.get("calibration_metrics", {})
+    agent_performance = analysis.get("agent_performance", {})
+
+    content = f"""
+**📊 Анализ калибровки прогнозов**
+
+**📈 Статистика прогнозов:**
+- **Всего зарегистрировано:** {forecast_counts.get('total_registered', 0)}
+- **Разрешено:** {forecast_counts.get('total_resolved', 0)}
+- **За период:** {forecast_counts.get('recent_resolved', 0)}
+
+**🎯 Метрики калибровки:**
+- **Brier Score:** {metrics.get('brier_score', 0):.4f} (чем меньше, тем лучше)
+- **Skill Score:** {metrics.get('brier_skill_score', 0):.4f if metrics.get('brier_skill_score') else 'N/A'} (vs baseline)
+- **Expected Calibration Error:** {metrics.get('expected_calibration_error', 0):.4f}
+- **Max Calibration Error:** {metrics.get('max_calibration_error', 0):.4f}
+
+**📊 Качество калибровки:** {analysis.get('calibration_quality', 'Unknown')}
+    """
+
+    # Agent performance breakdown
+    if agent_performance:
+        content += "\n**🤖 Производительность агентов:**\n"
+        for agent, perf in agent_performance.items():
+            brier = perf.get("brier_score", 0)
+            count = perf.get("count", 0)
+
+            # Quality indicator
+            quality_emoji = "🟢" if brier < 0.2 else "🟡" if brier < 0.3 else "🔴"
+
+            content += f"- **{agent}:** {quality_emoji} Brier {brier:.4f} ({count} прогнозов)\n"
+
+    # Recommendations
+    recommendations = calibration_result.get("recommendations", [])
+    if recommendations:
+        content += "\n**💡 Рекомендации:**\n"
+        for rec in recommendations:
+            content += f"• {rec}\n"
+
+    # Period info
+    content += f"\n**ℹ️ Период анализа:** {calibration_result.get('time_period', 'N/A')}"
+
+    await cl.Message(
+        author="📊 Калибровка прогнозов",
+        content=content,
+    ).send()
+
+
+async def display_risk_controls_result(risk_result: Dict[str, Any]) -> None:
+    """Display risk controls management results."""
+
+    action = risk_result.get("action", "unknown")
+    success = risk_result.get("success", False)
+
+    if not success:
+        error_msg = risk_result.get("error", "Unknown error")
+        content = f"""
+**❌ Ошибка управления рисками:**
+
+{error_msg}
+        """
+        await cl.Message(
+            author="⚠️ Управление рисками",
+            content=content,
+        ).send()
+        return
+
+    if action == "status":
+        # Risk status display
+        risk_status = risk_result.get("risk_status", {})
+
+        content = f"""
+**⚠️ Статус системы управления рисками**
+
+**🛑 Kill Switch:** {'🔴 АКТИВЕН' if risk_status.get('kill_switch_active') else '🟢 Неактивен'}
+        """
+
+        if risk_status.get("kill_switch_reason"):
+            content += f"**Причина:** {risk_status['kill_switch_reason']}\n"
+
+        # Circuit breakers
+        breakers = risk_status.get("circuit_breakers", {})
+        if breakers:
+            content += "\n**⚡ Circuit Breakers:**\n"
+            for breaker_id, breaker in breakers.items():
+                status_emoji = "🔴" if breaker.get("triggered") else "🟢"
+                utilization = breaker.get("utilization_pct", 0)
+
+                content += (
+                    f"- **{breaker.get('name')}:** {status_emoji} {utilization:.1f}%\n"
+                )
+                content += f"  Текущее: {breaker.get('current_value', 0):.4f} | Лимит: {breaker.get('threshold', 0):.4f}\n"
+
+        # Risk limits
+        limits = risk_status.get("risk_limits", {})
+        if limits:
+            content += "\n**📊 Лимиты риска:**\n"
+            for limit_id, limit in limits.items():
+                utilization = limit.get("utilization_pct", 0)
+                breach_count = limit.get("breach_count", 0)
+
+                status_emoji = (
+                    "🔴" if utilization > 80 else "🟡" if utilization > 60 else "🟢"
+                )
+
+                content += (
+                    f"- **{limit.get('type')}:** {status_emoji} {utilization:.1f}%\n"
+                )
+                content += f"  Нарушений: {breach_count}\n"
+
+        content += f"\n**📈 Решений за 24ч:** {risk_status.get('recent_decisions', 0)}"
+
+    elif action == "trigger_test":
+        # Circuit breaker test results
+        triggered = risk_result.get("triggered_breakers", [])
+        test_metrics = risk_result.get("test_metrics", {})
+
+        content = f"""
+**🔥 Тест Circuit Breakers**
+
+**Результат:** {len(triggered)} сработали из {len(triggered) + 0} проверенных
+
+**📊 Тестовые метрики:**
+- **Просадка:** {test_metrics.get('current_drawdown', 0):.1%}
+- **VaR:** {test_metrics.get('current_var', 0):.1%}  
+- **Дневной P&L:** ${test_metrics.get('daily_pnl', 0):,.0f}
+- **Волатильность:** {test_metrics.get('current_volatility', 0):.1%}
+
+**⚡ Сработавшие автоматы:** {len(triggered)}
+        """
+
+        for breaker_id in triggered:
+            content += f"- {breaker_id}\n"
+
+    else:
+        # Other actions
+        message = risk_result.get("message", "Action completed")
+        content = f"""
+**⚠️ Управление рисками - {action}**
+
+**Результат:** {message}
+        """
+
+    await cl.Message(
+        author="⚠️ Управление рисками",
+        content=content,
+    ).send()
+
+
+async def display_enhanced_metrics_result(metrics_result: Dict[str, Any]) -> None:
+    """Display enhanced trading metrics results."""
+
+    success = metrics_result.get("success", False)
+
+    if not success:
+        error_msg = metrics_result.get("error", "Unknown error")
+        content = f"""
+**❌ Ошибка вычисления метрик:**
+
+{error_msg}
+        """
+        await cl.Message(
+            author="📈 Улучшенные метрики",
+            content=content,
+        ).send()
+        return
+
+    requested_metrics = metrics_result.get("requested_metrics", [])
+    calculated_metrics = metrics_result.get("calculated_metrics", {})
+    time_period = metrics_result.get("time_period", "1y")
+    benchmark = metrics_result.get("benchmark")
+
+    content = f"""
+**📈 Улучшенные торговые метрики**
+
+**⏱️ Период:** {time_period}
+**📊 Бенчмарк:** {benchmark or 'Нет'}
+**🔢 Запрошенные метрики:** {', '.join(requested_metrics)}
+    """
+
+    # Calmar Ratio
+    if "calmar_ratio" in calculated_metrics:
+        calmar = calculated_metrics["calmar_ratio"]
+        ratio = calmar.get("ratio", 0)
+        annual_return = calmar.get("annual_return", 0)
+        max_drawdown = calmar.get("max_drawdown", 0)
+
+        # Quality assessment
+        quality_emoji = (
+            "🏆"
+            if ratio > 2.0
+            else "✅"
+            if ratio > 1.0
+            else "⚠️"
+            if ratio > 0.5
+            else "❌"
+        )
+
+        content += f"""
+
+**📊 Calmar Ratio:** {quality_emoji} {ratio:.3f}
+- **Годовая доходность:** {annual_return:.2%}
+- **Максимальная просадка:** {max_drawdown:.2%}
+        """
+
+    # Sortino Ratio
+    if "sortino_ratio" in calculated_metrics:
+        sortino = calculated_metrics["sortino_ratio"]
+        ratio = sortino.get("ratio", 0)
+        annual_return = sortino.get("annual_return", 0)
+        downside_deviation = sortino.get("downside_deviation", 0)
+
+        quality_emoji = "🏆" if ratio > 2.0 else "✅" if ratio > 1.0 else "📉"
+
+        content += f"""
+
+**📊 Sortino Ratio:** {quality_emoji} {ratio:.3f}
+- **Годовая доходность:** {annual_return:.2%}
+- **Downside Deviation:** {downside_deviation:.2%}
+        """
+
+    # Implementation Shortfall
+    if "implementation_shortfall" in calculated_metrics:
+        impl = calculated_metrics["implementation_shortfall"]
+        shortfall_bps = impl.get("shortfall_bps", 0)
+        market_impact = impl.get("market_impact_bps", 0)
+        timing_cost = impl.get("timing_cost_bps", 0)
+        execution_time = impl.get("execution_time_seconds", 0)
+
+        quality_emoji = (
+            "🎯"
+            if abs(shortfall_bps) < 10
+            else "✅"
+            if abs(shortfall_bps) < 25
+            else "⚠️"
+        )
+
+        content += f"""
+
+**🎯 Implementation Shortfall:** {quality_emoji} {shortfall_bps:.1f} bps
+- **Market Impact:** {market_impact:.1f} bps
+- **Timing Cost:** {timing_cost:.1f} bps  
+- **Среднее время исполнения:** {execution_time:.1f}s
+        """
+
+    # Recommendations
+    recommendations = metrics_result.get("recommendations", [])
+    if recommendations:
+        content += "\n\n**💡 Рекомендации:**\n"
+        for rec in recommendations:
+            content += f"• {rec}\n"
+
+    # Comprehensive analysis if available
+    if "comprehensive_analysis" in metrics_result:
+        comp = metrics_result["comprehensive_analysis"]["additional_metrics"]
+
+        content += f"""
+
+**📊 Дополнительные метрики:**
+- **Sharpe Ratio:** {comp.get('sharpe_ratio', 0):.3f}
+- **Win Rate:** {comp.get('win_rate', 0):.1%}
+- **Profit Factor:** {comp.get('profit_factor', 0):.2f}
+- **Волатильность:** {comp.get('volatility', 0):.1%}
+        """
+
+    await cl.Message(
+        author="📈 Улучшенные метрики",
+        content=content,
+    ).send()
+
+
 async def display_error_result(error: Dict[str, Any]) -> None:
     """Display error result."""
 
@@ -951,6 +1256,64 @@ async def execute_tool(
 
             result = generate_alphas(cmd.symbols, cmd.specs, cmd.timeframe, cmd.period)
 
+        elif tool_name == "analyze_calibration":
+            cmd = CalibrationAnalysisRequest(**tool_params)
+
+            progress_msg = cl.Message(
+                author="📊 Калибровка прогнозов",
+                content=f"🔍 **Анализ калибровки прогнозов...**\n\n"
+                f"**Период:** {cmd.time_period}\n"
+                f"**Агенты:** {', '.join(cmd.agent_types)}\n"
+                f"**Диаграммы:** {'Да' if cmd.include_reliability_diagram else 'Нет'}\n\n"
+                f"⏳ Вычисление Brier Score и ECE...",
+            )
+            await progress_msg.send()
+
+            result = analyze_calibration(
+                cmd.time_period, cmd.agent_types, cmd.include_reliability_diagram
+            )
+
+        elif tool_name == "manage_risk_controls":
+            cmd = RiskControlsRequest(**tool_params)
+
+            progress_msg = cl.Message(
+                author="⚠️ Управление рисками",
+                content=f"⚡ **Управление системой рисков...**\n\n"
+                f"**Действие:** {cmd.action}\n"
+                f"**Тип контроля:** {cmd.control_type or 'Все'}\n\n"
+                f"⏳ Выполнение операции...",
+            )
+            await progress_msg.send()
+
+            result = manage_risk_controls_wrapper(
+                cmd.action,
+                cmd.control_type,
+                reason=cmd.reason,
+                authorized_by=cmd.authorized_by,
+                breaker_id=cmd.breaker_id,
+                activate=cmd.activate,
+                threshold_value=cmd.threshold_value,
+                trigger_type=cmd.trigger_type,
+                name=cmd.name,
+            )
+
+        elif tool_name == "calculate_enhanced_metrics":
+            cmd = EnhancedMetricsRequest(**tool_params)
+
+            progress_msg = cl.Message(
+                author="📈 Улучшенные метрики",
+                content=f"📊 **Вычисление торговых метрик...**\n\n"
+                f"**Метрики:** {', '.join(cmd.metrics)}\n"
+                f"**Период:** {cmd.time_period}\n"
+                f"**Бенчмарк:** {cmd.benchmark or 'Нет'}\n\n"
+                f"⏳ Расчет Calmar, Sortino, Implementation Shortfall...",
+            )
+            await progress_msg.send()
+
+            result = calculate_enhanced_metrics_wrapper(
+                cmd.metrics, cmd.time_period, cmd.benchmark
+            )
+
         elif tool_name == "report_completion":
             cmd = ReportTaskCompletion(**tool_params)
             await display_final_answer(cmd)
@@ -993,6 +1356,9 @@ async def run_sgr_step(task: str, conversation_log: List[Dict]) -> SGRTradingRes
 - analyze_web_content: Веб-скрапинг финансовых данных
 - research_financial_topic: Исследование (макс. 5 источников)
 - generate_alphas: Генерация альфа-факторов WorldQuant (delta, zscore, ts_rank, decay_linear, ts_mean, ts_std, delay) с расчетом информационного коэффициента
+- analyze_calibration: Анализ калибровки прогнозов (Brier Score, ECE, Reliability Diagrams)
+- manage_risk_controls: Управление рисками (circuit breakers, kill-switch, лимиты)
+- calculate_enhanced_metrics: Расчет продвинутых метрик (Calmar, Sortino, Implementation Shortfall)
 - report_completion: Финальные рекомендации
 - get_chat_history: Получить историю чата (session_id, limit, message_types)
 - save_chat_message: Сохранить сообщение (session_id, message_type, content)
@@ -1183,6 +1549,9 @@ def format_tool_name(tool: str) -> str:
         "analyze_web_content": "Анализ веб-контента",
         "research_financial_topic": "Исследование финансовых тем",
         "generate_alphas": "Генерация альфа-факторов",
+        "analyze_calibration": "Анализ калибровки прогнозов",
+        "manage_risk_controls": "Управление рисками",
+        "calculate_enhanced_metrics": "Расчет продвинутых метрик",
         "report_completion": "Финальный отчёт",
     }
 
@@ -1267,6 +1636,9 @@ async def start_chat():
 - 🌐 **Веб-скрапинг:** извлечение данных с любых финансовых сайтов
 - 🔍 **Комплексное исследование:** анализ множества источников одновременно
 - 🧮 **Alpha Factory:** генерация альфа-факторов WorldQuant с информационным коэффициентом
+- 📊 **Калибровка прогнозов:** Brier Score, ECE, Reliability Diagrams для оценки точности
+- ⚠️ **Управление рисками:** Circuit breakers, kill-switch, автоматические лимиты
+- 📈 **Продвинутые метрики:** Calmar ratio, Sortino ratio, Implementation Shortfall
 - 🧠 **Постоянная память:** сохранение истории чатов и торговых правил
 - Торговые рекомендации с ценами входа/выхода
 
@@ -1286,6 +1658,9 @@ async def start_chat():
 - 🔍 "Исследуй общественное мнение о искусственном интеллекте в финансах"
 - 🧮 "Создай альфа-факторы momentum и reversal для FAANG акций"
 - 🧮 "Сгенерируй факторы технического анализа с расчетом информационного коэффициента"
+- 📊 "Проанализируй калибровку моих прогнозов за последний месяц"
+- ⚠️ "Покажи текущий статус системы управления рисками"
+- 📈 "Рассчитай Calmar и Sortino ratio для моей стратегии"
 
 **Просто введите ваш вопрос, и я проведу пошаговый финансовый анализ!**
     """

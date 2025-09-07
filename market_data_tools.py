@@ -527,7 +527,11 @@ class TradingAnalyzer:
             # Generate rationale
             rationale = f"Technical Analysis: {'; '.join(signals)}. "
             rationale += f"News Sentiment: {avg_sentiment:.2f} (range: -1 to 1). "
-            rationale += f"Current price: ${current_price:.2f}, Volatility: {tech_indicators.volatility:.1%}."
+            
+            # Safe formatting for price and volatility
+            price_str = f"${current_price:.2f}" if current_price is not None else "N/A"
+            vol_str = f"{tech_indicators.volatility:.1%}" if tech_indicators.volatility is not None else "N/A"
+            rationale += f"Current price: {price_str}, Volatility: {vol_str}."
 
             # Confidence level based on signal strength and data quality
             confidence_factors = [

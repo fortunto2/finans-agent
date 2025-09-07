@@ -625,6 +625,54 @@ class AlphaGenerationRequest(BaseModel):
         extra = "forbid"
 
 
+# ============ Request Models for New Features ============
+
+
+class CalibrationAnalysisRequest(BaseModel):
+    """Request for forecast calibration analysis"""
+
+    tool: Literal["analyze_calibration"]
+    time_period: str = Field(default="30d")
+    agent_types: List[str] = Field(default_factory=lambda: ["all"])
+    include_reliability_diagram: bool = Field(default=True)
+
+    class Config:
+        extra = "forbid"
+
+
+class RiskControlsRequest(BaseModel):
+    """Request for risk controls setup or monitoring"""
+
+    tool: Literal["manage_risk_controls"]
+    action: Literal["status", "configure", "trigger_test", "reset"]
+    control_type: Optional[Literal["circuit_breaker", "kill_switch", "risk_limits"]] = (
+        None
+    )
+    # Specific parameters instead of Dict[str, Any]
+    reason: Optional[str] = None
+    authorized_by: Optional[str] = None
+    breaker_id: Optional[str] = None
+    activate: Optional[bool] = None
+    threshold_value: Optional[float] = None
+    trigger_type: Optional[str] = None
+    name: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class EnhancedMetricsRequest(BaseModel):
+    """Request for enhanced trading metrics calculation"""
+
+    tool: Literal["calculate_enhanced_metrics"]
+    metrics: List[Literal["calmar", "sortino", "implementation_shortfall"]]
+    time_period: str = Field(default="1y")
+    benchmark: Optional[str] = None
+
+    class Config:
+        extra = "forbid"
+
+
 # ============ SGR Response Model ============
 
 
@@ -649,6 +697,9 @@ class SGRTradingResponse(BaseModel):
         WebAnalysisRequest,
         ComprehensiveWebResearch,
         AlphaGenerationRequest,  # Alpha Factory tool
+        CalibrationAnalysisRequest,  # Forecast calibration
+        RiskControlsRequest,  # Risk management
+        EnhancedMetricsRequest,  # Advanced metrics
         ReportTaskCompletion,
         # Memory tools temporarily disabled for debugging
         CreateTradingRule,
@@ -694,6 +745,210 @@ class CustomerRule(BaseModel):
     active: bool = True
     created_at: datetime
     last_modified: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+# ============ Forecast Calibration Models ============
+
+
+class ForecastCalibration(BaseModel):
+    """Forecast calibration metrics and validation"""
+
+    forecast_id: str
+    predicted_probability: float = Field(..., ge=0.0, le=1.0)
+    actual_outcome: Optional[bool] = None  # None if not resolved yet
+    question: str
+    forecast_date: datetime
+    resolution_date: Optional[datetime] = None
+    confidence_interval: Dict[str, float] = Field(default_factory=dict)
+    agent_source: str = Field(description="Which agent made the forecast")
+
+    class Config:
+        extra = "forbid"
+
+
+class BrierScore(BaseModel):
+    """Brier Score calculation for forecast accuracy"""
+
+    score: float = Field(..., ge=0.0, le=1.0, description="Lower is better")
+    num_forecasts: int
+    resolution_period: str
+    skill_score: Optional[float] = None  # Compared to baseline
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+class CalibrationBin(BaseModel):
+    """Single bin for reliability diagram"""
+
+    bin_center: float = Field(..., ge=0.0, le=1.0)
+    predicted_prob: float = Field(..., ge=0.0, le=1.0)
+    actual_freq: float = Field(..., ge=0.0, le=1.0)
+    count: int
+
+    class Config:
+        extra = "forbid"
+
+
+class ExpectedCalibrationError(BaseModel):
+    """Expected Calibration Error (ECE) metrics"""
+
+    ece: float = Field(..., ge=0.0, description="Expected Calibration Error")
+    max_calibration_error: float = Field(
+        ..., ge=0.0, description="MCE - worst bin error"
+    )
+    bins: List[CalibrationBin]
+    num_bins: int = Field(default=10)
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+class ReliabilityDiagram(BaseModel):
+    """Reliability diagram data for calibration visualization"""
+
+    bins: List[CalibrationBin]
+    perfect_calibration_line: List[float]  # [0.1, 0.2, ..., 1.0]
+    ece_score: float
+    brier_score: float
+    num_forecasts: int
+
+    class Config:
+        extra = "forbid"
+
+
+# ============ Enhanced Trading Metrics Models ============
+
+
+class CalmarRatio(BaseModel):
+    """Calmar ratio - annual return / max drawdown"""
+
+    ratio: float
+    annual_return: float
+    max_drawdown: float
+    period_years: float
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+class SortinoRatio(BaseModel):
+    """Sortino ratio - focuses on downside deviation"""
+
+    ratio: float
+    annual_return: float
+    downside_deviation: float
+    target_return: float = Field(default=0.0)
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+class ImplementationShortfall(BaseModel):
+    """Implementation shortfall and slippage tracking"""
+
+    shortfall_bps: float = Field(description="Implementation shortfall in basis points")
+    market_impact_bps: float
+    timing_cost_bps: float
+    opportunity_cost_bps: float
+    trade_value: float
+    execution_time_seconds: float
+    timestamp: datetime
+
+    class Config:
+        extra = "forbid"
+
+
+# ============ Risk Control Models ============
+
+
+class CircuitBreaker(BaseModel):
+    """Circuit breaker configuration and status"""
+
+    breaker_id: str
+    name: str
+    trigger_type: Literal["drawdown", "var_breach", "loss_limit", "volatility"]
+    threshold_value: float
+    current_value: float
+    is_triggered: bool = False
+    trigger_time: Optional[datetime] = None
+    reset_time: Optional[datetime] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class KillSwitch(BaseModel):
+    """Kill switch for emergency trading halt"""
+
+    is_active: bool = False
+    trigger_reason: Optional[str] = None
+    triggered_by: Optional[str] = None  # User or system
+    trigger_time: Optional[datetime] = None
+    reactivation_time: Optional[datetime] = None
+    affected_strategies: List[str] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
+class RiskLimit(BaseModel):
+    """Risk limits and monitoring"""
+
+    limit_type: Literal["position_size", "daily_loss", "var_limit", "concentration"]
+    limit_value: float
+    current_value: float
+    utilization_pct: float = Field(..., ge=0.0, le=200.0)
+    breach_count: int = Field(default=0)
+    last_breach: Optional[datetime] = None
+
+    class Config:
+        extra = "forbid"
+
+
+# ============ Compliance and Audit Models ============
+
+
+class DecisionAudit(BaseModel):
+    """Audit trail for trading decisions"""
+
+    decision_id: str
+    timestamp: datetime
+    decision_type: Literal["buy", "sell", "hold", "close", "hedge"]
+    symbol: str
+    quantity: float
+    price: Optional[float] = None
+    rationale: str
+    confidence_level: float = Field(..., ge=0.0, le=1.0)
+    data_sources: List[str] = Field(default_factory=list)
+    risk_assessment: Dict[str, Any] = Field(default_factory=dict)
+    compliance_checks: List[str] = Field(default_factory=list)
+    executed: bool = False
+    execution_time: Optional[datetime] = None
+
+    class Config:
+        extra = "forbid"
+
+
+class ComplianceReport(BaseModel):
+    """Daily compliance report"""
+
+    report_date: datetime
+    total_decisions: int
+    executed_trades: int
+    risk_breaches: List[str] = Field(default_factory=list)
+    circuit_breaker_triggers: int = Field(default=0)
+    kill_switch_activations: int = Field(default=0)
+    avg_confidence_level: float
+    data_lineage_complete: bool
+    audit_trail_complete: bool
 
     class Config:
         extra = "forbid"
