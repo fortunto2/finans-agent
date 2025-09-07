@@ -1380,15 +1380,86 @@ async def run_sgr_step(task: str, conversation_log: List[Dict]) -> SGRTradingRes
 
     messages = [{"role": "system", "content": system_prompt}] + conversation_log
 
+    # Calculate token limits dynamically based on model capacity
+    max_completion_tokens = settings.max_completion_tokens
+
+    # If adaptive tokens enabled, adjust based on current prompt size
+    if settings.enable_adaptive_tokens:
+        # Estimate prompt tokens (rough approximation: 1 token ≈ 4 characters)
+        estimated_prompt_tokens = (
+            sum(len(msg.get("content", "")) for msg in messages) // 4
+        )
+
+        # Ensure we don't exceed the total model capacity (200K)
+        available_tokens = 200000 - estimated_prompt_tokens - 1000  # Buffer for safety
+        max_completion_tokens = min(max_completion_tokens, max(10000, available_tokens))
+
     # Use structured output
     completion = await client.beta.chat.completions.parse(
         model=deployment_name,
         response_format=SGRTradingResponse,
         messages=messages,
-        max_completion_tokens=2000,  # Increased from 1000 to 2000
+        max_completion_tokens=max_completion_tokens,
     )
 
-    return completion.choices[0].message.parsed
+    try:
+        sgr_response = completion.choices[0].message.parsed
+
+        # Log token usage for debugging
+        if hasattr(completion, "usage") and completion.usage:
+            usage = completion.usage
+            print(
+                f"Token usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+            )
+
+        return sgr_response
+
+    except Exception as e:
+        error_msg = str(e)
+
+        # Handle token limit errors more gracefully
+        if any(
+            phrase in error_msg
+            for phrase in [
+                "length limit was reached",
+                "CompletionUsage",
+                "max_tokens",
+                "token limit",
+            ]
+        ):
+            print(f"Token limit reached, retrying with reduced tokens: {e}")
+
+            try:
+                # Retry with 50% fewer tokens
+                reduced_tokens = max(5000, max_completion_tokens // 2)
+                print(f"Retrying with reduced tokens: {reduced_tokens}")
+
+                retry_completion = await client.beta.chat.completions.parse(
+                    model=deployment_name,
+                    response_format=SGRTradingResponse,
+                    messages=messages,
+                    max_completion_tokens=reduced_tokens,
+                )
+
+                return retry_completion.choices[0].message.parsed
+
+            except Exception as retry_error:
+                print(f"Retry with reduced tokens also failed: {retry_error}")
+                # Return a simplified response
+                from models import ReportTaskCompletion
+
+                return SGRTradingResponse(
+                    current_state="Token limit exceeded, continuing with reduced response",
+                    plan_remaining_steps_brief=["Continue analysis with next tool"],
+                    task_completed=False,
+                    function=ReportTaskCompletion(
+                        completed_steps_laconic=["Analysis step had token constraints"],
+                        code="partial_completion",
+                    ),
+                )
+        else:
+            print(f"Error in SGR step: {e}")
+            raise
 
 
 async def process_trading_request(task: str, max_steps: int = 10) -> None:
@@ -1647,6 +1718,7 @@ async def start_chat():
 - Модель: `{settings.azure_openai_deployment_name}`
 - Режим торговли: {'📄 Бумажная' if settings.enable_paper_trading else '💰 Реальная'}
 - Лимиты риска: {settings.max_position_size:.1%} позиция, {settings.max_daily_drawdown:.1%} просадка
+- Токены: {settings.max_completion_tokens:,} completion, адаптивные: {'✓' if settings.enable_adaptive_tokens else '✗'}
 
 **Примеры запросов:**
 - "Проанализируй текущую рыночную ситуацию по S&P 500"

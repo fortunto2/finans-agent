@@ -78,6 +78,19 @@ class TradingAgentSettings(BaseSettings):
     )
     risk_tolerance: str = Field(default="medium", description="Default risk tolerance")
 
+    # Token Configuration
+    max_completion_tokens: int = Field(
+        default=90000,
+        description="Maximum completion tokens for Azure OpenAI responses",
+    )
+    max_prompt_tokens: int = Field(
+        default=50000, description="Maximum prompt tokens for Azure OpenAI requests"
+    )
+    enable_adaptive_tokens: bool = Field(
+        default=True,
+        description="Enable adaptive token management based on model capacity",
+    )
+
     # Data Configuration
     real_time_enabled: bool = Field(
         default=False, description="Enable real-time data streaming"

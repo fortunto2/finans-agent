@@ -1404,32 +1404,94 @@ Instructions for financial analysis:
     messages = [{"role": "system", "content": system_prompt}] + conversation_log
 
     try:
+        # Calculate token limits dynamically based on model capacity
+        max_completion_tokens = settings.max_completion_tokens
+
+        # If adaptive tokens enabled, adjust based on current prompt size
+        if settings.enable_adaptive_tokens:
+            # Estimate prompt tokens (rough approximation: 1 token ≈ 4 characters)
+            estimated_prompt_tokens = (
+                sum(len(msg.get("content", "")) for msg in messages) // 4
+            )
+
+            # Ensure we don't exceed the total model capacity (200K)
+            available_tokens = (
+                200000 - estimated_prompt_tokens - 1000
+            )  # Buffer for safety
+            max_completion_tokens = min(
+                max_completion_tokens, max(10000, available_tokens)
+            )
+
         # Use structured output for financial analysis
         completion = client.beta.chat.completions.parse(
             model=deployment_name,
             response_format=SGRTradingResponse,
             messages=messages,
-            max_completion_tokens=2000,  # Reduced from 8000 to prevent timeout
+            max_completion_tokens=max_completion_tokens,
         )
 
         sgr_response = completion.choices[0].message.parsed
+
+        # Log token usage for debugging
+        if hasattr(completion, "usage") and completion.usage:
+            usage = completion.usage
+            logger.info(
+                f"Token usage: prompt={usage.prompt_tokens}, completion={usage.completion_tokens}, total={usage.total_tokens}"
+            )
+            console.print(
+                f"[dim]Tokens used: {usage.completion_tokens}/{max_completion_tokens} completion, {usage.total_tokens} total[/dim]"
+            )
+
         logger.info(f"SGR Financial Analysis: {sgr_response.current_state}")
         return sgr_response
 
     except Exception as e:
         error_msg = str(e)
-        if "length limit was reached" in error_msg or "CompletionUsage" in error_msg:
-            logger.warning(f"Token limit reached in SGR step, forcing completion: {e}")
-            # Return a forced completion response when token limit is reached
-            return SGRTradingResponse(
-                current_state="Token limit reached, forcing completion",
-                plan_remaining_steps_brief=["Complete analysis with available data"],
-                task_completed=True,
-                function=ReportTaskCompletion(
-                    completed_steps_laconic=["Analysis interrupted due to token limit"],
-                    code="completed",
-                ),
+
+        # Handle token limit errors more gracefully
+        if any(
+            phrase in error_msg
+            for phrase in [
+                "length limit was reached",
+                "CompletionUsage",
+                "max_tokens",
+                "token limit",
+            ]
+        ):
+            logger.warning(
+                f"Token limit reached in SGR step, retrying with reduced tokens: {e}"
             )
+
+            try:
+                # Retry with 50% fewer tokens
+                reduced_tokens = max(5000, max_completion_tokens // 2)
+                logger.info(f"Retrying with reduced tokens: {reduced_tokens}")
+
+                completion = client.beta.chat.completions.parse(
+                    model=deployment_name,
+                    response_format=SGRTradingResponse,
+                    messages=messages,
+                    max_completion_tokens=reduced_tokens,
+                )
+
+                sgr_response = completion.choices[0].message.parsed
+                logger.info(
+                    f"SGR Financial Analysis (reduced tokens): {sgr_response.current_state}"
+                )
+                return sgr_response
+
+            except Exception as retry_error:
+                logger.error(f"Retry with reduced tokens also failed: {retry_error}")
+                # Only force completion as last resort
+                return SGRTradingResponse(
+                    current_state="Token limit exceeded, continuing with reduced response",
+                    plan_remaining_steps_brief=["Continue analysis with next tool"],
+                    task_completed=False,  # Don't force completion
+                    function=ReportTaskCompletion(
+                        completed_steps_laconic=["Analysis step had token constraints"],
+                        code="partial_completion",
+                    ),
+                )
         else:
             logger.error(f"Error in SGR financial analysis step: {e}")
             raise
@@ -1448,7 +1510,8 @@ def run_financial_agent(task: str, max_steps: int = None) -> None:
             f"[bold blue]🚀 SGR Financial Trading Agent[/bold blue]\n\n"
             f"Task: {task}\n"
             f"Paper Trading: {'✓ Enabled' if settings.enable_paper_trading else '✗ Disabled'}\n"
-            f"Risk Settings: {settings.max_position_size:.1%} max position, {settings.max_daily_drawdown:.1%} max drawdown",
+            f"Risk Settings: {settings.max_position_size:.1%} max position, {settings.max_daily_drawdown:.1%} max drawdown\n"
+            f"Token Limits: {settings.max_completion_tokens:,} completion tokens, Adaptive: {'✓' if settings.enable_adaptive_tokens else '✗'}",
             expand=False,
             border_style="blue",
         )
