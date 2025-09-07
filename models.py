@@ -552,6 +552,79 @@ class GetChatHistory(BaseModel):
         extra = "forbid"
 
 
+# ============ Alpha Research Models ============
+
+
+class AlphaOp(BaseModel):
+    """Alpha operation specification (finding alphas operators)"""
+
+    name: Literal[
+        "delta", "delay", "ts_mean", "ts_std", "zscore", "ts_rank", "decay_linear"
+    ]
+    window: Optional[int] = None
+    k: Optional[int] = None  # Step for delta/delay operations
+
+    class Config:
+        extra = "forbid"
+
+
+class AlphaSpec(BaseModel):
+    """Alpha factor specification"""
+
+    name: str
+    input: Literal["open", "high", "low", "close", "volume", "returns"]
+    ops: List[AlphaOp] = Field(default_factory=list)
+
+    class Config:
+        extra = "forbid"
+
+
+class AlphaPoint(BaseModel):
+    """Single alpha factor data point"""
+
+    timestamp: datetime
+    value: float
+
+    class Config:
+        extra = "forbid"
+
+
+class AlphaSeries(BaseModel):
+    """Alpha factor time series for a symbol"""
+
+    symbol: str
+    factor: str
+    points: List[AlphaPoint]
+
+    class Config:
+        extra = "forbid"
+
+
+class AlphaReport(BaseModel):
+    """Alpha factor analysis report"""
+
+    factor: str
+    last_value: Dict[str, float]  # Last value per symbol
+    ic1d: Optional[float] = None  # Information coefficient (1-day)
+    coverage: int  # Number of observations
+
+    class Config:
+        extra = "forbid"
+
+
+class AlphaGenerationRequest(BaseModel):
+    """Request to generate alpha factors"""
+
+    tool: Literal["generate_alphas"]
+    symbols: List[str]
+    specs: List[AlphaSpec]
+    timeframe: str = Field(default="1d")
+    period: str = Field(default="3mo")
+
+    class Config:
+        extra = "forbid"
+
+
 # ============ SGR Response Model ============
 
 
@@ -575,6 +648,7 @@ class SGRTradingResponse(BaseModel):
         BacktestRequest,
         WebAnalysisRequest,
         ComprehensiveWebResearch,
+        AlphaGenerationRequest,  # Alpha Factory tool
         ReportTaskCompletion,
         # Memory tools temporarily disabled for debugging
         CreateTradingRule,

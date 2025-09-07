@@ -24,6 +24,10 @@ from models import (
     WebAnalysisRequest,
     ComprehensiveWebResearch,
     ReportTaskCompletion,
+    # Alpha Factory models
+    AlphaGenerationRequest,
+    AlphaSpec,
+    AlphaOp,
 )
 
 from sgr_trading_agent import (
@@ -33,6 +37,7 @@ from sgr_trading_agent import (
     assess_risk,
     analyze_news,
     run_backtest,
+    generate_alphas,  # Alpha Factory function
     create_chat_session,
     save_chat_message,
     get_chat_history,
@@ -188,6 +193,8 @@ async def display_tool_result(tool_name: str, result: Union[Dict, List, str]) ->
             await display_web_analysis_result(result)
         elif "search_query" in result and "sources_analyzed" in result:
             await display_web_research_result(result)
+        elif "factors" in result and "reports" in result:
+            await display_alpha_factors_result(result)
         elif "error" in result:
             await display_error_result(result)
         elif "final_answer_displayed" in result:
@@ -616,6 +623,154 @@ async def display_web_research_result(research: Dict[str, Any]) -> None:
     await msg.send()
 
 
+async def display_alpha_factors_result(alpha_result: Dict[str, Any]) -> None:
+    """Display alpha factors generation results beautifully."""
+
+    success = alpha_result.get("success", False)
+    factors = alpha_result.get("factors", [])
+    reports = alpha_result.get("reports", [])
+    symbols_processed = alpha_result.get("symbols_processed", 0)
+    factors_computed = alpha_result.get("factors_computed", 0)
+
+    if not success:
+        error_msg = alpha_result.get("error", "Unknown error")
+        content = f"""
+**❌ Ошибка генерации альфа-факторов:**
+
+{error_msg}
+        """
+
+        await cl.Message(
+            author="🧮 Alpha Factory",
+            content=content,
+        ).send()
+        return
+
+    # Main results summary
+    content = f"""
+**🧮 Alpha Factory - Генерация факторов завершена**
+
+**📊 Статистика:**
+- **Символов обработано:** {symbols_processed}
+- **Факторов вычислено:** {factors_computed}
+- **Временных рядов создано:** {len(factors)}
+- **Отчетов сгенерировано:** {len(reports)}
+    """
+
+    # Information Coefficient (IC) analysis
+    if reports:
+        content += "\n**📈 Анализ информационного коэффициента (IC):**\n"
+
+        # Sort reports by absolute IC value
+        valid_reports = []
+        weak_reports = []
+
+        for report in reports:
+            factor_name = report.get("factor", "Unknown")
+            ic = report.get("ic1d")
+            coverage = report.get("coverage", 0)
+
+            if ic is not None:
+                abs_ic = abs(ic)
+                if abs_ic > 0.05:  # Meaningful IC
+                    valid_reports.append((factor_name, ic, coverage, abs_ic))
+                else:
+                    weak_reports.append((factor_name, ic, coverage))
+            else:
+                weak_reports.append((factor_name, None, coverage))
+
+        # Sort by absolute IC (strongest first)
+        valid_reports.sort(key=lambda x: x[3], reverse=True)
+
+        # Display strong factors
+        if valid_reports:
+            content += "\n**🏆 Сильные предикторы (|IC| > 0.05):**\n"
+            for factor_name, ic, coverage, abs_ic in valid_reports:
+                strength = (
+                    "Очень сильный"
+                    if abs_ic > 0.15
+                    else "Сильный"
+                    if abs_ic > 0.10
+                    else "Умеренный"
+                )
+                direction = "📈 Положительный" if ic > 0 else "📉 Отрицательный"
+
+                # Create progress bar for IC strength
+                ic_normalized = min(abs_ic * 5, 1.0)  # Scale to 0-1 for display
+                progress_bar = "█" * int(ic_normalized * 10) + "░" * (
+                    10 - int(ic_normalized * 10)
+                )
+
+                content += f"• **{factor_name}**: IC={ic:.4f} ({coverage} obs)\n"
+                content += f"  {direction} | {strength} | `{progress_bar}`\n"
+
+        # Display weak factors
+        if weak_reports:
+            content += "\n**📊 Слабые факторы (|IC| ≤ 0.05 или N/A):**\n"
+            for factor_name, ic, coverage in weak_reports[
+                :3
+            ]:  # Show max 3 weak factors
+                if ic is not None:
+                    content += f"• **{factor_name}**: IC={ic:.4f} ({coverage} obs) - Слабый сигнал\n"
+                else:
+                    content += f"• **{factor_name}**: IC=N/A ({coverage} obs) - Недостаточно данных\n"
+
+    # Factor coverage by symbol
+    if factors:
+        # Group factors by symbol
+        symbol_coverage = {}
+        for factor in factors:
+            symbol = factor.get("symbol", "Unknown")
+            factor_name = factor.get("factor", "Unknown")
+            points_count = len(factor.get("points", []))
+
+            if symbol not in symbol_coverage:
+                symbol_coverage[symbol] = {}
+            symbol_coverage[symbol][factor_name] = points_count
+
+        if symbol_coverage:
+            content += "\n**📋 Покрытие факторов по символам:**\n"
+            for symbol, factors_data in list(symbol_coverage.items())[
+                :5
+            ]:  # Show max 5 symbols
+                content += f"\n**{symbol}:**\n"
+                for factor_name, points in factors_data.items():
+                    content += f"  • {factor_name}: {points} точек данных\n"
+
+    # Sample factor values
+    if reports:
+        content += "\n**🔢 Последние значения факторов (образец):**\n"
+        for report in reports[:3]:  # Show first 3 factors
+            factor_name = report.get("factor", "Unknown")
+            last_values = report.get("last_value", {})
+
+            if last_values:
+                content += f"\n**{factor_name}:**\n"
+                for symbol, value in list(last_values.items())[:5]:  # First 5 symbols
+                    # Format value nicely
+                    if abs(value) < 0.001:
+                        value_str = f"{value:.6f}"
+                    elif abs(value) < 1:
+                        value_str = f"{value:.4f}"
+                    else:
+                        value_str = f"{value:.2f}"
+                    content += f"  {symbol}: {value_str}\n"
+
+    # Alpha Factory info
+    content += f"""
+
+**ℹ️ Alpha Factory Info:**
+- Использованы операторы WorldQuant Finding Alphas
+- Кросс-секционный анализ с ранговой корреляцией
+- Временной горизонт: {alpha_result.get('timestamp', 'N/A')[:19] if alpha_result.get('timestamp') else 'N/A'}
+    """
+
+    await cl.Message(
+        author="🧮 Alpha Factory",
+        content=content,
+    ).send()
+
+
 async def display_error_result(error: Dict[str, Any]) -> None:
     """Display error result."""
 
@@ -779,6 +934,23 @@ async def execute_tool(
                 cmd.time_range,
             )
 
+        elif tool_name == "generate_alphas":
+            cmd = AlphaGenerationRequest(**tool_params)
+
+            # Show alpha generation progress
+            progress_msg = cl.Message(
+                author="🧮 Alpha Factory",
+                content=f"🔬 **Начинаю генерацию альфа-факторов...**\n\n"
+                f"**Символы:** {', '.join(cmd.symbols)}\n"
+                f"**Количество факторов:** {len(cmd.specs)}\n"
+                f"**Период данных:** {cmd.period}\n"
+                f"**Таймфрейм:** {cmd.timeframe}\n\n"
+                f"⏳ Скачивание данных и вычисление факторов...",
+            )
+            await progress_msg.send()
+
+            result = generate_alphas(cmd.symbols, cmd.specs, cmd.timeframe, cmd.period)
+
         elif tool_name == "report_completion":
             cmd = ReportTaskCompletion(**tool_params)
             await display_final_answer(cmd)
@@ -820,6 +992,7 @@ async def run_sgr_step(task: str, conversation_log: List[Dict]) -> SGRTradingRes
 - run_backtest: Валидация стратегии
 - analyze_web_content: Веб-скрапинг финансовых данных
 - research_financial_topic: Исследование (макс. 5 источников)
+- generate_alphas: Генерация альфа-факторов WorldQuant (delta, zscore, ts_rank, decay_linear, ts_mean, ts_std, delay) с расчетом информационного коэффициента
 - report_completion: Финальные рекомендации
 - get_chat_history: Получить историю чата (session_id, limit, message_types)
 - save_chat_message: Сохранить сообщение (session_id, message_type, content)
@@ -1009,6 +1182,7 @@ def format_tool_name(tool: str) -> str:
         "run_backtest": "Бэктестирование",
         "analyze_web_content": "Анализ веб-контента",
         "research_financial_topic": "Исследование финансовых тем",
+        "generate_alphas": "Генерация альфа-факторов",
         "report_completion": "Финальный отчёт",
     }
 
@@ -1092,6 +1266,7 @@ async def start_chat():
 - Бэктестирование стратегий
 - 🌐 **Веб-скрапинг:** извлечение данных с любых финансовых сайтов
 - 🔍 **Комплексное исследование:** анализ множества источников одновременно
+- 🧮 **Alpha Factory:** генерация альфа-факторов WorldQuant с информационным коэффициентом
 - 🧠 **Постоянная память:** сохранение истории чатов и торговых правил
 - Торговые рекомендации с ценами входа/выхода
 
@@ -1109,6 +1284,8 @@ async def start_chat():
 - "Оцени влияние новостей на технологический сектор"
 - 🌐 "Проанализируй последний отчет Apple с сайта investor.apple.com"
 - 🔍 "Исследуй общественное мнение о искусственном интеллекте в финансах"
+- 🧮 "Создай альфа-факторы momentum и reversal для FAANG акций"
+- 🧮 "Сгенерируй факторы технического анализа с расчетом информационного коэффициента"
 
 **Просто введите ваш вопрос, и я проведу пошаговый финансовый анализ!**
     """

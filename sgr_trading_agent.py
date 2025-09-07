@@ -48,6 +48,11 @@ from models import (
     # MarketDataResponse,  # Not used directly
     ForecastResult,
     # TradingRecommendation,  # Not used directly
+    # Alpha Factory models
+    AlphaGenerationRequest,
+    AlphaSpec,
+    AlphaSeries,
+    AlphaReport,
 )
 
 # Import market data tools
@@ -66,6 +71,9 @@ from web_intelligence import (
 
 # Import Opoint API for news analysis
 from api import OpointAPI
+
+# Import Alpha Factory engine
+from alpha_engine import compute_alphas
 
 # Setup rich console for beautiful output
 console = Console()
@@ -86,6 +94,7 @@ __all__ = [
     "create_chat_session",
     "save_chat_message",
     "get_chat_history",
+    "generate_alphas",
     "dispatch",
 ]
 
@@ -443,6 +452,9 @@ def dispatch(cmd) -> Union[str, Dict[str, Any], List[Dict[str, Any]]]:
             cmd.extract_financial_data,
             cmd.time_range,
         )
+
+    elif isinstance(cmd, AlphaGenerationRequest):
+        return generate_alphas(cmd.symbols, cmd.specs, cmd.timeframe, cmd.period)
 
     elif isinstance(cmd, CreateTradingRule):
         # Convert TradingRuleParameters to dict for internal functions
@@ -1184,6 +1196,49 @@ def run_backtest(
         }
 
 
+def generate_alphas(
+    symbols: List[str], 
+    specs: List[AlphaSpec], 
+    timeframe: str = "1d", 
+    period: str = "3mo"
+) -> Dict[str, Any]:
+    """Generate alpha factors using WorldQuant Finding Alphas operators"""
+    try:
+        logger.info(f"Generating {len(specs)} alpha factors for {len(symbols)} symbols")
+        
+        # Use alpha engine to compute factors
+        result = compute_alphas(symbols, specs, timeframe, period)
+        
+        if result.get("success"):
+            # Store analysis in history
+            analysis_record = {
+                "type": "alpha_generation",
+                "symbols": symbols,
+                "specs": [s.model_dump() for s in specs],
+                "timestamp": datetime.now().isoformat(),
+                "reports": result.get("reports", []),
+                "factors_count": len(result.get("factors", [])),
+                "timeframe": timeframe,
+                "period": period,
+            }
+            DB.analysis_history.append(analysis_record)
+            
+            logger.info(f"Alpha generation completed: {len(result.get('factors', []))} factor series")
+        else:
+            logger.warning(f"Alpha generation failed: {result.get('error', 'Unknown error')}")
+        
+        return result
+        
+    except Exception as e:
+        logger.error(f"Error in alpha generation: {e}")
+        return {
+            "success": False,
+            "error": str(e),
+            "symbols_requested": symbols,
+            "specs_requested": [spec.name for spec in specs],
+        }
+
+
 # ============ Azure OpenAI Integration ============
 
 
@@ -1214,6 +1269,7 @@ Available financial analysis tools:
 - run_backtest: Historical strategy validation and performance metrics
 - analyze_web_content: Extract structured financial data from any web page using Firecrawl API (earnings reports, analyst reports, financial news)
 - research_financial_topic: Comprehensive web research on financial topics with sentiment analysis and data extraction from multiple sources (max 5 sources for performance)
+- generate_alphas: Create alpha factors using WorldQuant Finding Alphas operators (delta, delay, ts_mean, ts_std, zscore, ts_rank, decay_linear) with cross-sectional IC calculation
 
 Memory management tools (SGR style):
 - create_trading_rule: Create persistent trading rules and preferences in memory (risk_management, trading_preference, analysis_guideline)
@@ -1259,7 +1315,7 @@ Instructions for financial analysis:
             model=deployment_name,
             response_format=SGRTradingResponse,
             messages=messages,
-            max_completion_tokens=8000,
+            max_completion_tokens=2000,  # Reduced from 8000 to prevent timeout
         )
 
         sgr_response = completion.choices[0].message.parsed
@@ -1267,8 +1323,22 @@ Instructions for financial analysis:
         return sgr_response
 
     except Exception as e:
-        logger.error(f"Error in SGR financial analysis step: {e}")
-        raise
+        error_msg = str(e)
+        if "length limit was reached" in error_msg or "CompletionUsage" in error_msg:
+            logger.warning(f"Token limit reached in SGR step, forcing completion: {e}")
+            # Return a forced completion response when token limit is reached
+            return SGRTradingResponse(
+                current_state="Token limit reached, forcing completion",
+                plan_remaining_steps_brief=["Complete analysis with available data"],
+                task_completed=True,
+                function=ReportTaskCompletion(
+                    completed_steps_laconic=["Analysis interrupted due to token limit"],
+                    code="completed",
+                ),
+            )
+        else:
+            logger.error(f"Error in SGR financial analysis step: {e}")
+            raise
 
 
 # ============ Main Agent Loop ============
@@ -1439,6 +1509,37 @@ def run_financial_agent(task: str, max_steps: int = None) -> None:
                     console.print(
                         f"[green]📰 News Analysis:[/green] {sentiment.upper()} sentiment ({avg_sentiment:.2f}) from {articles_count} articles via {data_source}"
                     )
+                elif "factors" in result and "reports" in result:
+                    factors_count = len(result.get("factors", []))
+                    reports = result.get("reports", [])
+                    symbols_processed = result.get("symbols_processed", 0)
+                    factors_computed = result.get("factors_computed", 0)
+                    
+                    console.print(
+                        f"[green]🧮 Alpha Factors Generated:[/green] {factors_computed} factors for {symbols_processed} symbols ({factors_count} series)"
+                    )
+                    
+                    # Show IC results for each factor
+                    if reports:
+                        console.print("[cyan]Information Coefficient (IC) Results:[/cyan]")
+                        for report in reports[:5]:  # Show top 5 factors
+                            factor_name = report.get("factor", "Unknown")
+                            ic = report.get("ic1d")
+                            coverage = report.get("coverage", 0)
+                            
+                            if ic is not None:
+                                ic_str = f"{ic:.4f}"
+                                if abs(ic) > 0.05:
+                                    ic_color = "green" if ic > 0 else "red"
+                                    console.print(f"  • {factor_name}: IC={ic_str} ({coverage} obs) [{ic_color}]{'Strong' if abs(ic) > 0.1 else 'Moderate'}[/{ic_color}]")
+                                else:
+                                    console.print(f"  • {factor_name}: IC={ic_str} ({coverage} obs) [dim]Weak[/dim]")
+                            else:
+                                console.print(f"  • {factor_name}: IC=N/A ({coverage} obs)")
+                    
+                    # Show last values for debugging
+                    if len(reports) > 0 and reports[0].get("last_value"):
+                        console.print(f"[dim]Last factor values available for {len(reports[0]['last_value'])} symbols[/dim]")
                 else:
                     # General result display
                     result_json = json.dumps(
